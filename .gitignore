@@ -1,0 +1,10 @@
+bin/
+obj/
+.vs/
+*.user
+
+# Functions local runtime state — never commit real connection strings
+local.settings.json
+
+# Azurite local emulator data, if run from inside the repo
+__azurite*

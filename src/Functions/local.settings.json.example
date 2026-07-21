@@ -1,0 +1,9 @@
+{
+    "IsEncrypted": false,
+    "Values": {
+        "AzureWebJobsStorage": "UseDevelopmentStorage=true",
+        "FUNCTIONS_WORKER_RUNTIME": "dotnet-isolated",
+
+        "ServiceBusConnection": "<real Service Bus namespace connection string goes here - required only for OrderCreatedFunction to start listening>"
+    }
+}
