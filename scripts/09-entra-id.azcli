@@ -1,0 +1,67 @@
+# =============================================================================
+# 09 — Entra ID app registration (secure the API)  (pairs with
+#      docs/MANAGED_IDENTITY_ENTRA_ID.md)
+# =============================================================================
+#
+# ⚠️  LEARNING REFERENCE — read it, run it yourself when ready. Assumes
+#     $RG / $SUFFIX are set from 00-resource-group.azcli.
+#
+# 💰  COST — Entra ID app registrations are FREE. (The identity platform itself
+#     is free at this tier; you only pay for premium AD features you won't use
+#     here.)
+#
+# -----------------------------------------------------------------------------
+# THEORY — App registration = your API's identity in Entra ID
+# -----------------------------------------------------------------------------
+# This is the INBOUND-auth half of docs/MANAGED_IDENTITY_ENTRA_ID.md: instead of
+# the API managing its own usernames/passwords, Entra ID issues callers a JWT,
+# and the API just VALIDATES it (signature, audience, issuer, expiry). To do
+# that the API needs to be REGISTERED in Entra ID so it has:
+#   * an Application (client) ID  -> becomes AzureAd:ClientId (the "audience"
+#     the token must be addressed to),
+#   * a Tenant ID                 -> becomes AzureAd:TenantId (whose tokens to
+#     trust),
+# both of which Program.cs reads to switch on AddMicrosoftIdentityWebApi. Set
+# neither and the [Authorize] endpoints simply have no auth scheme wired up
+# (the conditional guard in Program.cs).
+#
+# NOTE: this is DIFFERENT from the Web App's Managed Identity in 03. That
+# identity is the app authenticating OUTBOUND to Azure (Key Vault etc.). This
+# registration is about validating callers coming INBOUND to the app. Same
+# platform, opposite directions — the single most useful distinction to have
+# straight for interviews.
+# -----------------------------------------------------------------------------
+
+APP_REG_NAME="HighFidelity-Api-$SUFFIX"
+
+# --- 1. Register the API as an application -----------------------------------
+# --identifier-uris gives the API a unique "audience" URI that tokens target.
+az ad app create \
+  --display-name "$APP_REG_NAME" \
+  --identifier-uris "api://highfidelity-$SUFFIX"
+
+# --- 2. Read back the IDs the app config needs -------------------------------
+CLIENT_ID=$(az ad app list --display-name "$APP_REG_NAME" --query "[0].appId" -o tsv)
+TENANT_ID=$(az account show --query tenantId -o tsv)
+echo "AzureAd__ClientId=$CLIENT_ID"
+echo "AzureAd__TenantId=$TENANT_ID"
+echo "AzureAd__Instance=https://login.microsoftonline.com/"
+# Set those three as app settings on the Web App (03 step 4). Once present,
+# /api/secure/whoami starts requiring a valid Entra ID token.
+
+# --- 3. (Optional) expose a scope, so clients can request a token ------------
+# For a client to actually GET a token for this API you'd also define an
+# exposed API scope (e.g. "access_as_user") and register a client app that
+# requests it. That's several more steps and is usually done in the portal's
+# "Expose an API" / "API permissions" blades — out of scope for this quick
+# reference, but that's the direction: define scope -> client requests token
+# for api://highfidelity-<suffix>/access_as_user -> sends it as a Bearer header.
+
+# -----------------------------------------------------------------------------
+# VERIFY:
+#   Without a token:  GET https://<webapp>/api/secure/whoami  -> 401 Unauthorized
+#   With a valid Entra ID bearer token for this app's audience -> 200 + your
+#   token's claims echoed back. Getting a real token requires step 3's scope +
+#   a client, which is why this topic is most often EXPLAINED rather than fully
+#   exercised end-to-end (see docs/MANAGED_IDENTITY_ENTRA_ID.md).
+# -----------------------------------------------------------------------------

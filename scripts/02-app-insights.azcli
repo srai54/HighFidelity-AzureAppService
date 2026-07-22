@@ -1,0 +1,77 @@
+# =============================================================================
+# 02 — Application Insights  (pairs with docs/APPLICATION_INSIGHTS.md)
+# =============================================================================
+#
+# ⚠️  LEARNING REFERENCE — read it, run it yourself when ready. Assumes
+#     $RG / $LOCATION / $SUFFIX are set from 00-resource-group.azcli.
+#
+# -----------------------------------------------------------------------------
+# THEORY — What Application Insights is and why you provision it early
+# -----------------------------------------------------------------------------
+# Application Insights (App Insights) is Azure's application-performance-
+# monitoring (APM) service: it collects telemetry from your running app —
+# requests, dependencies (outbound HTTP/SQL calls), exceptions, traces, custom
+# metrics — so you can see what a DEPLOYED app is actually doing. You can't
+# attach a debugger to a live App Service; App Insights is how you see inside.
+#
+# Under the hood, modern App Insights stores its data in a Log Analytics
+# WORKSPACE (a queryable log store). So there are two resources:
+#   1. The Log Analytics workspace (the data store).
+#   2. The App Insights "component" (the telemetry endpoint your app talks to),
+#      linked to that workspace.
+# You provision this EARLY because the App Service (03) and Function App (04)
+# both want its connection string as an app setting at creation time.
+#
+# The app only enables telemetry when the connection string is present — and
+# critically, AddApplicationInsightsTelemetry() THROWS at startup if you call
+# it with no connection string (a real bug hit while building this repo — see
+# docs/APPLICATION_INSIGHTS.md). Program.cs guards against that.
+# -----------------------------------------------------------------------------
+
+WORKSPACE_NAME="log-highfid-$SUFFIX"
+APPINSIGHTS_NAME="appi-highfid-$SUFFIX"
+
+# The application-insights CLI commands live in an extension; install once.
+az extension add --name application-insights --only-show-errors
+
+# --- 1. Log Analytics workspace (the backing data store) ---------------------
+# Cost note: pay-as-you-go ingestion, first 5 GB/month free — a demo won't
+# come close, so effectively $0.
+az monitor log-analytics workspace create \
+  --resource-group "$RG" \
+  --workspace-name "$WORKSPACE_NAME" \
+  --location "$LOCATION"
+
+WORKSPACE_ID=$(az monitor log-analytics workspace show \
+  --resource-group "$RG" \
+  --workspace-name "$WORKSPACE_NAME" \
+  --query id -o tsv)
+
+# --- 2. App Insights component, linked to the workspace ----------------------
+az monitor app-insights component create \
+  --app "$APPINSIGHTS_NAME" \
+  --resource-group "$RG" \
+  --location "$LOCATION" \
+  --workspace "$WORKSPACE_ID" \
+  --application-type web
+
+# --- 3. Grab the connection string (this is what the app needs) --------------
+# Prefer the CONNECTION STRING over the older bare "instrumentation key" —
+# the connection string includes the regional ingestion endpoint and is the
+# only form current SDKs officially support.
+az monitor app-insights component show \
+  --app "$APPINSIGHTS_NAME" \
+  --resource-group "$RG" \
+  --query connectionString -o tsv
+# -> InstrumentationKey=...;IngestionEndpoint=https://...
+#    03/04 set this as the app setting:
+#      ApplicationInsights__ConnectionString = <that value>
+#    (or the conventional APPLICATIONINSIGHTS_CONNECTION_STRING — App Service
+#     wires that one up automatically if you link App Insights in the portal.)
+
+# -----------------------------------------------------------------------------
+# VERIFY (after the app is deployed with the connection string set):
+#   Hit a few endpoints, wait ~2-3 min, then in the portal open the App
+#   Insights resource -> "Live Metrics" (real-time) or "Transaction search"
+#   (recent requests). Telemetry lag of a couple minutes is normal.
+# -----------------------------------------------------------------------------

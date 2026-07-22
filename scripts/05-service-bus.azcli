@@ -1,0 +1,69 @@
+# =============================================================================
+# 05 — Service Bus  (pairs with docs/SERVICE_BUS.md and docs/MESSAGING_COMPARISON.md)
+# =============================================================================
+#
+# ⚠️  LEARNING REFERENCE — read it, run it yourself when ready. Assumes
+#     $RG / $LOCATION / $SUFFIX are set from 00-resource-group.azcli.
+#
+# -----------------------------------------------------------------------------
+# THEORY — Namespace vs. queue, and the publisher/receiver split
+# -----------------------------------------------------------------------------
+# Service Bus is a reliable message broker for commands/work-items between a
+# producer and a consumer (see docs/SERVICE_BUS.md; and MESSAGING_COMPARISON.md
+# for why you'd pick it over Event Grid / Storage Queues / Event Hub).
+#
+# Two-level hierarchy:
+#   * NAMESPACE = the container/endpoint (like a server). Globally unique name;
+#     this is what the connection string points at.
+#   * QUEUE (or topic) = lives inside a namespace. Our app uses one queue named
+#     "orders".
+# In THIS repo the two halves live in different projects, connected ONLY by this
+# queue: the WebApp's OrdersController PUBLISHES to "orders"; the Function App's
+# OrderCreatedFunction RECEIVES from it. That decoupling is the whole point.
+#
+# Tier: BASIC is enough for a single queue (~$0.05 per million operations —
+# pennies for a demo). Topics/subscriptions need STANDARD; sessions/dedup need
+# STANDARD too. We only need a plain queue, so Basic.
+# -----------------------------------------------------------------------------
+
+SB_NAMESPACE="sb-highfid-$SUFFIX"       # globally unique
+SB_QUEUE="orders"                        # must match the queue name in code (OrdersController / OrderCreatedFunction)
+
+# --- 1. Create the namespace (Basic tier) ------------------------------------
+az servicebus namespace create \
+  --name "$SB_NAMESPACE" \
+  --resource-group "$RG" \
+  --location "$LOCATION" \
+  --sku Basic
+
+# --- 2. Create the queue -----------------------------------------------------
+# --max-delivery-count 10: after 10 failed delivery attempts, the message is
+# moved to the queue's dead-letter sub-queue instead of being retried forever
+# (see docs/SERVICE_BUS.md on dead-lettering).
+az servicebus queue create \
+  --name "$SB_QUEUE" \
+  --namespace-name "$SB_NAMESPACE" \
+  --resource-group "$RG" \
+  --max-delivery-count 10
+
+# --- 3. Get the connection string --------------------------------------------
+# The default "RootManageSharedAccessKey" rule grants full access — fine for
+# learning. In production you'd create scoped rules (Send-only for the
+# publisher, Listen-only for the receiver) instead of sharing the root key.
+az servicebus namespace authorization-rule keys list \
+  --resource-group "$RG" \
+  --namespace-name "$SB_NAMESPACE" \
+  --name RootManageSharedAccessKey \
+  --query primaryConnectionString -o tsv
+# -> Endpoint=sb://...;SharedAccessKeyName=...;SharedAccessKey=...
+#
+# Wire it up on BOTH sides:
+#   WebApp (publisher):   app setting  ServiceBus__ConnectionString = <that string>   (03 step 4)
+#   Functions (receiver): app setting  ServiceBusConnection         = <that string>   (04 step 3)
+
+# -----------------------------------------------------------------------------
+# VERIFY end-to-end (both apps deployed + connection strings set):
+#   POST https://<webapp>/api/orders   (publishes an OrderCreatedMessage -> 202)
+#   Then check the Function App's logs / App Insights for OrderCreatedFunction
+#   firing — that's the message having traveled through the "orders" queue.
+# -----------------------------------------------------------------------------

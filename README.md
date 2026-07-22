@@ -43,9 +43,15 @@ docs/
   SQL_VS_COSMOS.md             → theory + interview Q&A
   MESSAGING_COMPARISON.md      → theory + interview Q&A (conceptual — no dedicated code)
   DEPLOYMENT_SLOTS_SCALING.md  → theory + interview Q&A (conceptual — no dedicated code)
+  PROVISIONING.md              → how to CREATE the Azure resources (indexes the scripts/ folder)
+scripts/
+  00..09 + 99 .azcli           → commented az CLI provisioning scripts, one per feature (learning
+                                 reference — NOT auto-run; you run them yourself after `az login`)
 ```
 
 Each `docs/*.md` file follows the same shape: a plain-English explanation (with an analogy, aimed at actually sticking in memory rather than reading like a spec), how this repo implements it with real file references, and a set of interview questions with real answers at the end.
+
+**To actually deploy any of this to Azure**, see `docs/PROVISIONING.md` — it indexes the `scripts/` folder (one commented az CLI script per feature), covers the run order, the app-settings wiring, and the cost breakdown against a free credit. Those scripts are a **learning reference only**: nothing in this repo executes them, and they create real billable resources solely when you choose to run them yourself.
 
 ## Read this before trusting any "it works" claim
 

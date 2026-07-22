@@ -1,0 +1,59 @@
+# =============================================================================
+# 00 — Resource Group + shared conventions
+# =============================================================================
+#
+# ⚠️  LEARNING REFERENCE — NOT run automatically by anyone/anything.
+#     These are az CLI commands you read to understand provisioning, and run
+#     yourself, line by line, ONLY when you've decided to. Nothing in this repo
+#     executes them. They will create real, billable Azure resources when YOU
+#     run them — see docs/PROVISIONING.md for the cost breakdown ($200 free
+#     credit easily covers everything here; most of it is free-tier anyway).
+#
+# -----------------------------------------------------------------------------
+# THEORY — What is a Resource Group, and why start here?
+# -----------------------------------------------------------------------------
+# A Resource Group (RG) is a logical container that holds related Azure
+# resources (your app, its database, its Key Vault, etc.) as a single unit.
+# It is the single most important cost-control tool you have:
+#   * Everything for one project goes in one RG.
+#   * When you're done demoing/learning, you DELETE THE RG (see 99-teardown)
+#     and every resource inside it is gone — billing stops instantly. This is
+#     why you never have to worry about a forgotten Redis cache quietly eating
+#     your credit for a month.
+# An RG lives in a "location" (region), but resources inside it can be in other
+# regions — the RG's own location just says where its metadata is stored.
+# -----------------------------------------------------------------------------
+
+# --- Prerequisites (run once, on your own machine) ---------------------------
+# Install the Azure CLI, then sign in. `az login` opens a browser and uses YOUR
+# account — this is the only "credential" step; everything after authenticates
+# through this session (the same DefaultAzureCredential chain the app uses
+# locally — see docs/KEYVAULT.md).
+#
+#   az login
+#   az account show            # confirm you're in the subscription you expect
+#   az account set --subscription "<your-subscription-id-or-name>"
+
+# --- Shared variables --------------------------------------------------------
+# Bash-style variables. On PowerShell, use $RG = "..." etc. instead.
+# Azure requires MANY resource names to be GLOBALLY unique (Key Vault, Storage,
+# Web/Function App, Service Bus, Redis, Cosmos all share a global namespace).
+# A short random suffix avoids "name already taken" errors.
+RG="rg-highfidelity-learning"
+LOCATION="eastus"                      # pick a region close to you; eastus is cheap and has every service
+SUFFIX="$RANDOM"                       # e.g. 24917 — reused by later scripts for uniqueness
+echo "Using suffix: $SUFFIX  (write this down — later scripts reuse it)"
+
+# --- Create the resource group -----------------------------------------------
+az group create \
+  --name "$RG" \
+  --location "$LOCATION"
+
+# --- Verify ------------------------------------------------------------------
+az group show --name "$RG" --output table
+
+# -----------------------------------------------------------------------------
+# NEXT: run 01-keyvault.azcli. Each subsequent script assumes $RG, $LOCATION,
+# and $SUFFIX are still set in your shell session. If you open a new terminal,
+# re-set them at the top before continuing.
+# -----------------------------------------------------------------------------

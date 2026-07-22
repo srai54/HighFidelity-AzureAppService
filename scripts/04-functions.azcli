@@ -1,0 +1,85 @@
+# =============================================================================
+# 04 — Function App (deploy the Functions project)  (pairs with docs/FUNCTION_APPS.md
+#      and docs/DURABLE_FUNCTIONS.md)
+# =============================================================================
+#
+# ⚠️  LEARNING REFERENCE — read it, run it yourself when ready. Assumes
+#     $RG / $LOCATION / $SUFFIX are set from 00-resource-group.azcli.
+#
+# -----------------------------------------------------------------------------
+# THEORY — Function App, Consumption plan, and why it needs a storage account
+# -----------------------------------------------------------------------------
+# A Function App hosts your triggered functions (HTTP, Timer, Service Bus, and
+# the Durable orchestration — see docs/FUNCTION_APPS.md / DURABLE_FUNCTIONS.md).
+# The key hosting choice is the plan:
+#   * CONSUMPTION plan — serverless, pay-per-execution, scales to zero when
+#     idle. First 1,000,000 executions/month are FREE. This is what we use:
+#     a demo costs effectively $0. Trade-off: "cold starts" (a few seconds of
+#     latency after idle) because there's no always-on process.
+#   * Premium / Dedicated — always-warm, VNet integration, no cold start, but
+#     you pay for reserved capacity. Overkill for learning.
+#
+# EVERY Function App needs a STORAGE ACCOUNT — the Functions runtime uses it
+# for internal bookkeeping (trigger state, leases, and, for Durable Functions,
+# the entire event-history/queues that make orchestration replay work — see
+# docs/DURABLE_FUNCTIONS.md). This is separate from any storage account you use
+# for Blob Storage app data (06); you *can* reuse one, but keeping them separate
+# is cleaner.
+# -----------------------------------------------------------------------------
+
+FUNC_STORAGE="stfunchighfid$SUFFIX"     # 3-24 chars, LOWERCASE letters+digits ONLY, globally unique
+FUNCAPP_NAME="func-highfid-$SUFFIX"
+APPINSIGHTS_NAME="appi-highfid-$SUFFIX" # from 02
+
+# --- 1. Storage account for the Functions runtime ----------------------------
+az storage account create \
+  --name "$FUNC_STORAGE" \
+  --resource-group "$RG" \
+  --location "$LOCATION" \
+  --sku Standard_LRS                    # Locally-Redundant Storage = cheapest, fine for this
+
+# --- 2. Create the Function App on a Consumption plan ------------------------
+# --consumption-plan-location makes it Consumption (serverless) rather than
+# provisioning a dedicated plan. --functions-version 4 + dotnet-isolated matches
+# this project (Functions.csproj: net8.0, isolated worker, V4).
+az functionapp create \
+  --name "$FUNCAPP_NAME" \
+  --resource-group "$RG" \
+  --consumption-plan-location "$LOCATION" \
+  --runtime dotnet-isolated \
+  --runtime-version 8 \
+  --functions-version 4 \
+  --storage-account "$FUNC_STORAGE" \
+  --app-insights "$APPINSIGHTS_NAME"
+
+# --- 3. App settings ---------------------------------------------------------
+# The Service Bus-triggered function (OrderCreatedFunction) listens only if
+# "ServiceBusConnection" is set — this is the app-setting NAME the [ServiceBusTrigger]
+# references, not the connection string literal. Fill it after running 05.
+#
+#   SB_CONN=$(az servicebus namespace authorization-rule keys list \
+#     --resource-group "$RG" --namespace-name "sb-highfid-$SUFFIX" \
+#     --name RootManageSharedAccessKey --query primaryConnectionString -o tsv)
+#   az functionapp config appsettings set \
+#     --name "$FUNCAPP_NAME" --resource-group "$RG" \
+#     --settings "ServiceBusConnection=$SB_CONN"
+
+# --- 4. Deploy the code ------------------------------------------------------
+# Easiest is the Functions Core Tools publisher (respects the isolated-worker
+# packaging automatically). Run from src/Functions:
+#
+#   cd ../src/Functions
+#   func azure functionapp publish "$FUNCAPP_NAME"
+#
+# (Or zip-deploy like 03, but `func ... publish` handles the .azurefunctions
+#  packaging quirks for you — recommended for isolated-worker apps.)
+
+# -----------------------------------------------------------------------------
+# VERIFY:
+#   HTTP trigger:  https://func-highfid-<suffix>.azurewebsites.net/api/greet/YourName
+#   Timer trigger: fires on its schedule (0 */5 * * * *) — check App Insights
+#                  traces or the Function App's "Monitor" tab for invocations.
+#   Durable:       POST https://.../api/orders/batch  -> 202 + a statusQueryGetUri;
+#                  poll that URI until runtimeStatus = "Completed".
+#   Service Bus trigger: only active once ServiceBusConnection is set (step 3).
+# -----------------------------------------------------------------------------

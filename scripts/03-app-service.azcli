@@ -1,0 +1,95 @@
+# =============================================================================
+# 03 — App Service (deploy the WebApp)  (pairs with docs/DEPLOYMENT_SLOTS_SCALING.md)
+# =============================================================================
+#
+# ⚠️  LEARNING REFERENCE — read it, run it yourself when ready. Assumes
+#     $RG / $LOCATION / $SUFFIX are set from 00-resource-group.azcli.
+#
+# -----------------------------------------------------------------------------
+# THEORY — App Service Plan vs. App Service, and why F1
+# -----------------------------------------------------------------------------
+# Two resources, often confused:
+#   * App Service PLAN = the compute you pay for (a set of VMs, abstracted).
+#     Its pricing tier (F1/B1/S1/P1v3...) decides CPU/RAM AND which features
+#     are even available (slots, autoscale need Standard+; F1 Free has neither).
+#   * App Service = the actual web app that RUNS on a plan. One plan can host
+#     several apps.
+# We pick F1 (Free): $0, 60 CPU-min/day, 1 GB RAM — plenty for a demo API and
+# it never touches your credit. Upgrade to B1 (~$13/mo) if you need "always on"
+# (no cold-start) or a custom domain. See docs/DEPLOYMENT_SLOTS_SCALING.md for
+# scale-up vs scale-out and deployment slots (slots need Standard+, so not on F1).
+# -----------------------------------------------------------------------------
+
+PLAN_NAME="plan-highfid-$SUFFIX"
+APP_NAME="app-highfid-$SUFFIX"          # becomes https://app-highfid-<suffix>.azurewebsites.net
+KEYVAULT_NAME="kv-highfid-$SUFFIX"      # from 01
+APPINSIGHTS_NAME="appi-highfid-$SUFFIX" # from 02
+
+# --- 1. Create the plan (Free tier, Linux) -----------------------------------
+az appservice plan create \
+  --name "$PLAN_NAME" \
+  --resource-group "$RG" \
+  --location "$LOCATION" \
+  --sku F1 \
+  --is-linux
+
+# --- 2. Create the Web App (.NET 8 runtime) ----------------------------------
+az webapp create \
+  --name "$APP_NAME" \
+  --resource-group "$RG" \
+  --plan "$PLAN_NAME" \
+  --runtime "DOTNETCORE:8.0"
+
+# --- 3. Give the app a system-assigned Managed Identity ----------------------
+# THIS is the identity DefaultAzureCredential uses in Azure — no secret stored.
+# Needed for Key Vault (grant it "Key Vault Secrets User" — see 01 step 3) and
+# would also let you switch Blob/Service Bus/Cosmos to identity-based auth.
+az webapp identity assign \
+  --name "$APP_NAME" \
+  --resource-group "$RG"
+
+# Now go run 01-keyvault.azcli STEP 3 (the grant block) — the app identity
+# exists, so the role assignment will succeed.
+
+# --- 4. Configure app settings -----------------------------------------------
+# App settings become environment variables in the app. Azure maps a
+# double-underscore "__" to the ":" config separator, so "KeyVault__Uri" here
+# is read as "KeyVault:Uri" by builder.Configuration in Program.cs.
+KV_URI=$(az keyvault show --name "$KEYVAULT_NAME" --query properties.vaultUri -o tsv)
+AI_CONN=$(az monitor app-insights component show --app "$APPINSIGHTS_NAME" --resource-group "$RG" --query connectionString -o tsv)
+
+az webapp config appsettings set \
+  --name "$APP_NAME" \
+  --resource-group "$RG" \
+  --settings \
+    "KeyVault__Uri=$KV_URI" \
+    "ApplicationInsights__ConnectionString=$AI_CONN" \
+    "ASPNETCORE_ENVIRONMENT=Production"
+# Add Storage__ConnectionString, ServiceBus__ConnectionString, Redis__ConnectionString,
+# Cosmos__ConnectionString, AzureAd__* here too once you've run 04-09 and want
+# those features live. Each is optional — the app degrades gracefully without them.
+
+# --- 5. Deploy the code ------------------------------------------------------
+# Simplest path: build a self-contained zip and push it. Run from src/WebApp.
+#
+#   cd ../src/WebApp
+#   dotnet publish -c Release -o ./publish
+#   cd publish && zip -r ../app.zip . && cd ..
+#   az webapp deploy \
+#     --name "$APP_NAME" \
+#     --resource-group "$RG" \
+#     --src-path ./app.zip \
+#     --type zip
+#
+# (Alternatives for real projects: `az webapp up`, GitHub Actions CI/CD, or
+#  VS/VS Code "Publish". Zip deploy is the most transparent for learning.)
+
+# --- 6. Restart so it picks up settings + identity ---------------------------
+az webapp restart --name "$APP_NAME" --resource-group "$RG"
+
+# -----------------------------------------------------------------------------
+# VERIFY:
+#   https://app-highfid-<suffix>.azurewebsites.net/swagger   (root redirects here)
+#   https://.../api/payment-gateway/config-snapshot          (proves Key Vault)
+#   https://.../api/resilience/hammer-flaky/10               (proves Polly, no deps)
+# -----------------------------------------------------------------------------

@@ -1,0 +1,61 @@
+# =============================================================================
+# 07 — Azure Cache for Redis  (pairs with docs/REDIS_CACHE.md)
+# =============================================================================
+#
+# ⚠️  LEARNING REFERENCE — read it, run it yourself when ready. Assumes
+#     $RG / $LOCATION / $SUFFIX are set from 00-resource-group.azcli.
+#
+# 💰  COST WARNING — this is the ONE resource in this repo with no free tier.
+#     The cheapest (Basic C0, 250 MB) is ~$16/month, billed hourly (~$0.022/hr).
+#     Your $200 credit covers it easily, but unlike everything else it is NOT
+#     free — so create it only when you actually want to demo Redis, and let
+#     99-teardown remove it promptly afterward. Also note: creating a Redis
+#     cache is SLOW (15-20 minutes to provision) — that's normal, not a hang.
+#
+# -----------------------------------------------------------------------------
+# THEORY — Managed Redis and why the app doesn't care it's Redis
+# -----------------------------------------------------------------------------
+# Azure Cache for Redis is a managed Redis instance — an in-memory key-value
+# store used as a cache in front of a slower data source (the cache-aside
+# pattern — see docs/REDIS_CACHE.md). The app talks to it through .NET's
+# IDistributedCache abstraction, so the SAME controller code that runs against
+# the in-memory fallback locally runs against real Redis here just by supplying
+# a connection string. That's the whole reason to code against the interface.
+#
+# Tiers: Basic (single node, no SLA — fine for dev/demo), Standard (replicated,
+# has an SLA), Premium (clustering, persistence, VNet). C0 = smallest size.
+# -----------------------------------------------------------------------------
+
+REDIS_NAME="redis-highfid-$SUFFIX"      # globally unique
+
+# --- 1. Create the cache (Basic C0) ------------------------------------------
+# This command returns quickly but provisioning continues in the background for
+# ~15-20 min. Check status with the `az redis show ... --query provisioningState`
+# line below until it reads "Succeeded" before trying to connect.
+az redis create \
+  --name "$REDIS_NAME" \
+  --resource-group "$RG" \
+  --location "$LOCATION" \
+  --sku Basic \
+  --vm-size c0
+
+# Poll until ready:
+az redis show --name "$REDIS_NAME" --resource-group "$RG" --query provisioningState -o tsv
+
+# --- 2. Build the StackExchange.Redis connection string ----------------------
+# Format expected by AddStackExchangeRedisCache:
+#   <host>:<sslPort>,password=<primaryKey>,ssl=True,abortConnect=False
+HOST=$(az redis show --name "$REDIS_NAME" --resource-group "$RG" --query hostName -o tsv)
+SSL_PORT=$(az redis show --name "$REDIS_NAME" --resource-group "$RG" --query sslPort -o tsv)
+KEY=$(az redis list-keys --name "$REDIS_NAME" --resource-group "$RG" --query primaryKey -o tsv)
+echo "Redis__ConnectionString=$HOST:$SSL_PORT,password=$KEY,ssl=True,abortConnect=False"
+# Set that as the app setting  Redis__ConnectionString  (03 step 4). When it's
+# present the app uses real Redis; when absent it falls back to in-memory.
+
+# -----------------------------------------------------------------------------
+# VERIFY (app deployed with Redis__ConnectionString set):
+#   POST https://<webapp>/api/cache-demo/reset-counter
+#   GET  https://<webapp>/api/cache-demo/product/1   -> source: "source-of-truth"
+#   GET  https://<webapp>/api/cache-demo/product/1   -> source: "cache"  (within 30s)
+#   The second read served from Redis instead of re-running the slow load.
+# -----------------------------------------------------------------------------

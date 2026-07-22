@@ -1,0 +1,40 @@
+# =============================================================================
+# 99 — Teardown (stop ALL billing)
+# =============================================================================
+#
+# ⚠️  LEARNING REFERENCE — read it, run it yourself when ready.
+# ⚠️  DESTRUCTIVE — deleting the resource group deletes EVERYTHING inside it,
+#     irreversibly. That's exactly what you want when done learning/demoing,
+#     but make sure nothing else you care about lives in this RG first.
+#
+# -----------------------------------------------------------------------------
+# THEORY — Why "delete the resource group" is the whole cost-safety story
+# -----------------------------------------------------------------------------
+# Everything in 00-09 was created inside ONE resource group ($RG). Deleting that
+# group deletes every resource in it in one operation, and billing for all of
+# them stops immediately. This is why putting a whole learning project in a
+# single dedicated RG matters: there's exactly one thing to remember to remove,
+# and no risk of a forgotten Redis cache (the only non-free item) quietly
+# draining your credit for weeks.
+# -----------------------------------------------------------------------------
+
+RG="rg-highfidelity-learning"
+
+# See what will be destroyed BEFORE doing it:
+az resource list --resource-group "$RG" --output table
+
+# Delete the whole group. --no-wait returns immediately; deletion continues in
+# the background (can take several minutes). Drop --no-wait to block until done.
+az group delete \
+  --name "$RG" \
+  --yes \
+  --no-wait
+
+# Confirm it's gone (once background deletion finishes this returns false):
+az group exists --name "$RG"
+
+# -----------------------------------------------------------------------------
+# If you only want to remove the ONE expensive resource (Redis) but keep the
+# rest of the free-tier stack running:
+#   az redis delete --name "redis-highfid-$SUFFIX" --resource-group "$RG" --yes
+# -----------------------------------------------------------------------------

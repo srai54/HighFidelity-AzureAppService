@@ -1,0 +1,79 @@
+# =============================================================================
+# 08 — Azure Cosmos DB  (pairs with docs/SQL_VS_COSMOS.md)
+# =============================================================================
+#
+# ⚠️  LEARNING REFERENCE — read it, run it yourself when ready. Assumes
+#     $RG / $LOCATION / $SUFFIX are set from 00-resource-group.azcli.
+#
+# 💰  COST — Cosmos has a FREE TIER: 1000 RU/s + 25 GB, free forever, but ONLY
+#     ONE free-tier account per subscription. --enable-free-tier true below
+#     claims it. If you've already used your free-tier account elsewhere this
+#     will error — drop the flag and you'll pay ~$24/mo minimum (still fine on
+#     $200, but prefer the free tier).
+#
+# -----------------------------------------------------------------------------
+# THEORY — Account -> database -> container, and the partition key
+# -----------------------------------------------------------------------------
+# Cosmos DB is a globally-distributed NoSQL database (see docs/SQL_VS_COSMOS.md
+# for relational-vs-NoSQL and when to pick which). Hierarchy:
+#   * ACCOUNT = the top-level resource, tied to an API. We use the Core (SQL)
+#     API — JSON documents, the most common choice.
+#   * DATABASE = a namespace inside the account.
+#   * CONTAINER = where documents live. THE key decision is its PARTITION KEY —
+#     Cosmos physically distributes documents by this key's value. A query that
+#     includes it = cheap single-partition read; one that doesn't = expensive
+#     cross-partition fan-out. Chosen at creation, not changeable later.
+# We partition Orders by /customerId, matching the app's dominant query
+# ("get this customer's orders") — see CosmosDemoController.
+# -----------------------------------------------------------------------------
+
+COSMOS_ACCOUNT="cosmos-highfid-$SUFFIX"  # globally unique, lowercase
+COSMOS_DB="HighFidelityDb"               # must match CosmosDemoController.DatabaseId
+COSMOS_CONTAINER="Orders"                # must match CosmosDemoController.ContainerId
+PARTITION_KEY="/customerId"              # must match the partition key the code reads by
+
+# --- 1. Create the account (Core/SQL API, free tier) -------------------------
+az cosmosdb create \
+  --name "$COSMOS_ACCOUNT" \
+  --resource-group "$RG" \
+  --locations regionName="$LOCATION" \
+  --enable-free-tier true \
+  --default-consistency-level Session   # Session = the sensible default consistency level
+
+# --- 2. Create the database --------------------------------------------------
+az cosmosdb sql database create \
+  --account-name "$COSMOS_ACCOUNT" \
+  --resource-group "$RG" \
+  --name "$COSMOS_DB"
+
+# --- 3. Create the container with its partition key --------------------------
+# --throughput 400 = the minimum provisioned RU/s (covered by the free tier's
+# 1000 RU/s). For spiky/dev workloads you could use autoscale instead.
+az cosmosdb sql container create \
+  --account-name "$COSMOS_ACCOUNT" \
+  --resource-group "$RG" \
+  --database-name "$COSMOS_DB" \
+  --name "$COSMOS_CONTAINER" \
+  --partition-key-path "$PARTITION_KEY" \
+  --throughput 400
+
+# --- 4. Get the connection string --------------------------------------------
+az cosmosdb keys list \
+  --name "$COSMOS_ACCOUNT" \
+  --resource-group "$RG" \
+  --type connection-strings \
+  --query "connectionStrings[0].connectionString" -o tsv
+# -> AccountEndpoint=https://...;AccountKey=...;
+#    Set app setting  Cosmos__ConnectionString = <that string>   (03 step 4).
+#    When absent, CosmosDemoController returns 503 rather than failing to start.
+
+# -----------------------------------------------------------------------------
+# VERIFY (app deployed with Cosmos__ConnectionString set):
+#   You'll need a document to read first — insert one via the portal's Data
+#   Explorer into Orders, e.g.
+#     { "id": "ORD-1", "customerId": "CUST-1", "status": "paid", "total": 42 }
+#   Point read (cheap): GET https://<webapp>/api/cosmos-demo/orders/CUST-1/ORD-1
+#   Cross-partition (pricier): GET https://<webapp>/api/cosmos-demo/orders/by-status/paid
+#   Compare the requestChargeRUs in each response — that's the partition-key
+#   lesson made concrete.
+# -----------------------------------------------------------------------------

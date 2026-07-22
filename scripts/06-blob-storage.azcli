@@ -1,0 +1,72 @@
+# =============================================================================
+# 06 — Blob Storage  (pairs with docs/BLOB_STORAGE.md)
+# =============================================================================
+#
+# ⚠️  LEARNING REFERENCE — read it, run it yourself when ready. Assumes
+#     $RG / $LOCATION / $SUFFIX are set from 00-resource-group.azcli.
+#
+# -----------------------------------------------------------------------------
+# THEORY — Storage account, containers, and the three blob types
+# -----------------------------------------------------------------------------
+# Blob Storage holds unstructured files. Hierarchy:
+#   * STORAGE ACCOUNT = the top-level resource (globally unique name, holds
+#     Blob + Queue + Table + File services).
+#   * CONTAINER = like a top-level folder inside the Blob service. Our app uses
+#     one container; blobs live inside it.
+#   * BLOB = the file itself. The type (Block / Append / Page) is chosen when
+#     the blob is CREATED and can't be changed after — see docs/BLOB_STORAGE.md
+#     for why there are three (block = normal files, append = logs, page = VHDs)
+#     and the 512-byte alignment rule for page blobs.
+#
+# This is the one topic in the repo that was fully tested locally — against
+# Azurite, Microsoft's local Storage emulator, which speaks the same API. The
+# SAME app code works against this real account by swapping the connection
+# string; nothing in BlobStorageService.cs changes.
+#
+# Cost: a few MB of blobs on Standard_LRS is literally pennies/month.
+# -----------------------------------------------------------------------------
+
+BLOB_STORAGE="stblobhighfid$SUFFIX"     # LOWERCASE letters+digits ONLY, 3-24, globally unique
+BLOB_CONTAINER="app-blobs"
+
+# --- 1. Storage account ------------------------------------------------------
+# StorageV2 (general-purpose v2) is the standard modern account kind and
+# supports all three blob types. Standard_LRS = cheapest redundancy.
+az storage account create \
+  --name "$BLOB_STORAGE" \
+  --resource-group "$RG" \
+  --location "$LOCATION" \
+  --sku Standard_LRS \
+  --kind StorageV2
+
+# --- 2. Create a container ----------------------------------------------------
+# The app can also create containers at runtime, but pre-creating one is tidy.
+# --auth-mode login uses your az session (RBAC) rather than an account key.
+az storage container create \
+  --name "$BLOB_CONTAINER" \
+  --account-name "$BLOB_STORAGE" \
+  --auth-mode login
+
+# --- 3. Get the connection string --------------------------------------------
+az storage account show-connection-string \
+  --name "$BLOB_STORAGE" \
+  --resource-group "$RG" \
+  --query connectionString -o tsv
+# -> DefaultEndpointsProtocol=https;AccountName=...;AccountKey=...;EndpointSuffix=...
+#    Set app setting  Storage__ConnectionString = <that string>   (03 step 4).
+#    (Locally the app defaults to Azurite's "UseDevelopmentStorage=true" instead.)
+#
+#    PRODUCTION-BETTER alternative: skip the connection string (account key)
+#    entirely and use the app's Managed Identity —
+#      new BlobServiceClient(new Uri("https://<acct>.blob.core.windows.net"),
+#                            new DefaultAzureCredential())
+#    after granting the identity the "Storage Blob Data Contributor" role. Same
+#    no-stored-secret benefit as Key Vault's DefaultAzureCredential story.
+
+# -----------------------------------------------------------------------------
+# VERIFY (app deployed with Storage__ConnectionString set):
+#   POST https://<webapp>/api/blobs/block/hello.txt   (body = some text)
+#   POST https://<webapp>/api/blobs/append/audit.log
+#   POST https://<webapp>/api/blobs/page/disk.vhd?sizeInBytes=1024
+#   GET  https://<webapp>/api/blobs                   (lists all three)
+# -----------------------------------------------------------------------------
