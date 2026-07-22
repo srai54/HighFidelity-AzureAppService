@@ -270,6 +270,70 @@ The message flow end-to-end in this repo: `POST /api/orders` → `ServiceBusPubl
 sends to the `orders` queue → the queue holds it → `OrderCreatedFunction` receives
 and processes it. Producer and consumer never talk directly — only through the queue.
 
+## Duplicate detection
+
+**The problem:** networks are unreliable, so a publisher sometimes can't tell if a
+send actually succeeded and **retries** — potentially putting the *same* message on
+the queue twice. Duplicate detection makes Service Bus discard the second copy so
+the consumer only sees it once ("exactly-once *submission*").
+
+**How it works:** enable it on the queue/topic at **creation** (it can't be turned
+on later) — `RequiresDuplicateDetection = true` — and set a **duplicate-detection
+history time window** (default 10 minutes, configurable). Within that window,
+Service Bus tracks the **`MessageId`** of every message; if a new message arrives
+with a `MessageId` it has already seen, the new one is **silently dropped**
+server-side. The window is a trade-off: longer = catches duplicates further apart
+but costs more tracking overhead/throughput.
+
+**The catch that trips people up:** dedup keys on **`MessageId`**, so it only works
+if you set a *deterministic, business-meaningful* `MessageId` (e.g. the order id).
+This repo's `ServiceBusPublisher` currently sets `MessageId = Guid.NewGuid()` —
+a **new** id per call, so every message is unique and dedup would never trigger.
+To use duplicate detection you'd set something like `MessageId = orderId.ToString()`
+so a retried send of the same order carries the same id and gets deduped.
+
+```csharp
+// enabling it (provisioning): az servicebus queue create ... --enable-duplicate-detection true
+// and set a deterministic MessageId when sending:
+var msg = new ServiceBusMessage(body) { MessageId = order.OrderId.ToString() };
+```
+
+## Cross-entity transactions
+
+**Transactions** let you group several Service Bus operations into one **atomic**
+unit — either all succeed or all roll back, nothing partial. The classic need: a
+consumer wants to **receive/complete a message from one queue AND send a resulting
+message to another** as a single all-or-nothing step, so you can't end up having
+completed the input but lost the output (or vice versa).
+
+By default a transaction can only span operations on a **single entity**. To span
+**multiple** entities (complete on queue A + send to queue B/topic), you opt in with
+**`EnableCrossEntityTransactions = true`** on the client, and wrap the operations in
+a `TransactionScope`:
+
+```csharp
+var client = new ServiceBusClient(connectionString,
+    new ServiceBusClientOptions { EnableCrossEntityTransactions = true });
+
+var receiver = client.CreateReceiver("orders");
+var sender   = client.CreateSender("orders-processed");
+
+ServiceBusReceivedMessage msg = await receiver.ReceiveMessageAsync();
+
+using (var ts = new TransactionScope(TransactionScopeAsyncFlowOption.Enabled))
+{
+    await receiver.CompleteMessageAsync(msg);                       // remove from queue A
+    await sender.SendMessageAsync(new ServiceBusMessage("done"));   // send to queue B
+    ts.Complete();   // commit BOTH; if this line isn't reached, BOTH roll back
+}
+```
+
+**Constraints worth knowing:** all entities must live in the **same namespace**, and
+with cross-entity transactions enabled the **first entity you interact with becomes
+the "send-via" entity** that the others are routed through (an implementation detail
+of how Service Bus coordinates the atomic operation across entities). Transactions
+are a Standard/Premium feature (not Basic).
+
 ## What's real vs. reference-only in this repo
 
 The publisher and receiver code are both correct and match the real Azure Service Bus SDK surface exactly as they'd be used against a real namespace. Neither has been run end-to-end here — Azurite (used for Blob Storage) does **not** emulate Service Bus, and Microsoft's Service Bus emulator requires Docker, which wasn't available in this environment. The receiver's registration with the Functions host *was* confirmed (it correctly reported "connection string not configured" rather than crashing the whole host — see `docs/FUNCTION_APPS.md`), which at least proves the trigger attribute and method signature are valid.
@@ -316,6 +380,12 @@ An HTTP load balancer distributes *inbound requests* across instances that must 
 
 **Q: Does competing consumers preserve message order?**
 No — with plain competing consumers, multiple workers pull in parallel, so ordering isn't guaranteed. If you need ordering, use sessions: a session id pins all of one group's messages to a single consumer so they're processed in order, while different sessions still load-balance across consumers. It's a deliberate trade-off between maximum throughput and per-group ordering.
+
+**Q: What is duplicate detection and what does it key on?**
+It makes Service Bus discard a message whose `MessageId` it has already seen within a configured time window, so a publisher that retries a send (e.g. after a network blip) doesn't cause the consumer to process the same message twice. You enable it at queue/topic creation (`RequiresDuplicateDetection`, can't be changed later) and set the history window (default 10 min). The gotcha: it keys on `MessageId`, so you must assign a deterministic, business-meaningful id (like the order id) — random per-send ids (e.g. `Guid.NewGuid()`) never dedupe.
+
+**Q: What's a cross-entity transaction in Service Bus and when would you use one?**
+A transaction that atomically groups operations across *multiple* entities — e.g. completing a message on one queue and sending a message to another queue/topic as a single all-or-nothing unit, so you can't complete the input but lose the output. You enable `EnableCrossEntityTransactions` on the client and wrap the operations in a `TransactionScope`; all entities must be in the same namespace, and the first entity touched becomes the send-via entity. Use it for reliable "receive-and-forward" patterns where a partial result would corrupt state.
 
 **Q: Service Bus vs. Storage Queues — when would you pick one over the other?**
 Storage Queues are cheaper and simpler — fine for basic "fire and forget" background work. Service Bus costs more but adds things Storage Queues don't have: guaranteed ordering via sessions, transactions, a proper dead-letter subqueue, and topics/subscriptions (one message delivered to multiple independent subscribers, not just one consumer). Pick Service Bus when you need any of those; Storage Queues if you genuinely just need "a queue" and nothing more.

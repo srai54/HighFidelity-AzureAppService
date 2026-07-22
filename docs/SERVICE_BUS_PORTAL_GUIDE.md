@@ -1,7 +1,8 @@
 # Service Bus — Azure Portal Walkthrough (create namespace → queue → send/receive)
 
 A click-by-click guide to doing the whole Service Bus loop in the Azure Portal,
-no code required. This is the portal counterpart to `scripts/05-service-bus.azcli`
+no code required. Covers **queues** (Steps 1–6), **connection strings + SAS
+policies**, and **topics/subscriptions** (the one-to-many fan-out). This is the portal counterpart to `scripts/05-service-bus.azcli`
 (the CLI version) and `docs/SERVICE_BUS.md` (the theory). Great for a first look
 or a live demo, because you can *see* a message go in and come back out.
 
@@ -135,6 +136,48 @@ also drain (Listen) or reconfigure (Manage) your queues. The presence of
   string and you name the queue in `CreateSender("orders")`; an `EntityPath`-scoped
   string is used with APIs that target a single entity. This repo uses the
   namespace form (see `ServiceBusPublisher.cs`).
+
+## Creating a Topic + Subscription and publishing (portal)
+
+A **topic** is the one-to-many version of a queue: you publish once, and every
+**subscription** on the topic gets its own copy (see `docs/SERVICE_BUS.md` for the
+queue-vs-topic theory). Steps in the portal:
+
+> **Prerequisite:** topics need a **Standard** (or Premium) namespace — **Basic
+> does not support topics.** If your namespace is Basic, create a Standard one
+> first (same steps as Step 1, choose Standard as the pricing tier).
+
+### Create the topic
+1. Open the **namespace** → **Overview** → **+ Topic** (top toolbar).
+2. **Name** it, e.g. `orders-topic`. Leave size/TTL defaults.
+3. **Create**. It appears under the namespace's **Topics** list.
+
+### Create one or more subscriptions
+1. Click the **`orders-topic`** topic → **+ Subscription** (top toolbar).
+2. **Name** the subscription, e.g. `fulfillment` (create a second like `analytics`
+   if you want to see fan-out — each gets its own copy of every message).
+3. **Max delivery count** — default `10` is fine.
+4. *(Optional)* **Filters** — a subscription can have a SQL/correlation filter so it
+   only receives a subset (e.g. `amount > 1000`). Default is "receive everything."
+5. **Create**. Repeat for each interested receiver.
+
+### Publish a message to the topic
+1. Open the **topic** (`orders-topic`) → **Service Bus Explorer** → **Send messages**.
+2. Enter a body (e.g. the `OrderCreatedMessage` JSON) and **Send**. Sending to a
+   topic looks identical to sending to a queue — the fan-out happens *after* send.
+
+### See it fanned out to each subscription
+1. Go back to the topic → **Subscriptions** — each subscription's **message count**
+   went up by one (every subscription got its **own copy** of the message you sent).
+2. Open a subscription → **Service Bus Explorer** → **Peek/Receive** to read the
+   copy sitting in *that* subscription. Receiving from one subscription does **not**
+   affect the others — that's the difference from a queue, where a message is
+   consumed once total.
+
+**In code:** publishing is the same `ServiceBusSender` — you just create it against
+the **topic** name instead of a queue (`client.CreateSender("orders-topic")`).
+Receiving uses a receiver/processor created against the **topic + subscription**
+(`client.CreateReceiver("orders-topic", "fulfillment")`).
 
 ## Shared Access Policies (SAS) explained
 
