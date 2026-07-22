@@ -7,6 +7,23 @@ using WebApp.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// ── Configuration providers ──
+// CreateBuilder(args) has ALREADY registered the default configuration
+// providers, in this order (later ones override earlier ones for the same key):
+//   1. appsettings.json
+//   2. appsettings.{Environment}.json   (e.g. appsettings.Development.json)
+//   3. User Secrets                     (Development only)
+//   4. Environment variables            (App Service app settings arrive here)
+//   5. Command-line args
+// Everything merges into ONE builder.Configuration (an IConfiguration). You can
+// ADD MORE sources with builder.Configuration.Add*(...). Below we add an extra,
+// optional JSON file to make the "config is a layered stack of sources" idea
+// concrete — reloadOnChange means edits are picked up without a restart, and
+// optional:true means the app still starts fine when the file doesn't exist.
+// (AddAzureKeyVault in the Key Vault block below is just another Add* provider,
+// added last so its values win — see docs/ICONFIGURATION.md and docs/KEYVAULT.md.)
+builder.Configuration.AddJsonFile("appsettings.custom.json", optional: true, reloadOnChange: true);
+
 // ── Key Vault ──
 // Only wired up when a real Vault URI is configured (i.e. running in Azure
 // with KeyVault:Uri set as an App Service application setting). Locally,
@@ -135,6 +152,15 @@ builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
 var app = builder.Build();
+
+// ── Middleware pipeline ──
+// Order matters: each middleware runs in the order added, wrapping the next.
+// UseStaticFiles serves files straight from wwwroot/ (e.g. wwwroot/index.html
+// -> GET /index.html) WITHOUT hitting a controller — it short-circuits the
+// pipeline for matching file paths, which is exactly why it's placed early,
+// before routing/auth: no point running auth for a static asset. See
+// docs/ICONFIGURATION.md for the pipeline explanation.
+app.UseStaticFiles();
 
 app.UseSwagger();
 app.UseSwaggerUI();

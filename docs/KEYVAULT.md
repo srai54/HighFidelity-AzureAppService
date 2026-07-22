@@ -113,6 +113,32 @@ The precedence, worth committing to memory: `appsettings.json` (base) → `appse
 
 Key Vault secret names can't contain `:` (colons aren't a valid character in a secret name), but .NET config sections are colon-separated (`PaymentGateway:ApiKey`). The Key Vault configuration provider handles this by convention: a secret literally named `PaymentGateway--ApiKey` (double-dash) gets mapped to the config key `PaymentGateway:ApiKey` automatically. Miss this and you'll create a secret in the portal, restart the app, and the value will just silently not bind — no error, just an empty string.
 
+## Keys vs. Secrets vs. Certificates — three different things Key Vault stores
+
+Key Vault holds three distinct object types, and mixing up "key" and "secret" is one of the most common Key Vault interview stumbles:
+
+| Type | What it is | You can read the raw value? | Typical use |
+|---|---|---|---|
+| **Secret** | An arbitrary value Key Vault just stores and hands back (a string ≤ 25KB) — API keys, connection strings, passwords | **Yes** — you retrieve the actual value | 95% of app usage, incl. everything in this repo (`PaymentGateway--ApiKey` etc.) |
+| **Key** | A cryptographic key (RSA/EC), used for crypto *operations* | **No** — the private key never leaves the Vault; you send data *to* the Vault to be signed/encrypted/wrapped | Signing tokens, encrypting data, "bring your own key" scenarios |
+| **Certificate** | An X.509 cert (managed as a key + secret pair under the hood) | Partially | TLS/HTTPS certs, auto-renewal |
+
+The crucial distinction is **Key vs. Secret**:
+- A **secret** is *passive storage* — Key Vault is a lockbox; you put a value in, you take the same value out. Your app receives the actual API key and uses it.
+- A **key** is *active crypto* — the private key material is generated in (or imported to) the Vault and **can never be exported**. Instead of "give me the key," your app says "here's some data, sign it / encrypt it *with* the key" and the Vault performs the operation and returns only the result. The secret never touches your app's memory. This is what makes keys suitable for high-value crypto (a leaked signing key is catastrophic; keeping it un-exportable inside the Vault removes that risk).
+
+This repo uses **secrets only** (`Azure.Security.KeyVault.Secrets`, the config provider reads secrets). Keys would use `Azure.Security.KeyVault.Keys` and a `CryptographyClient`.
+
+## Key rotation vs. secret rotation
+
+"Rotation" = replacing a credential with a fresh one on a schedule (or after a suspected compromise), so a leaked/stale credential has a limited useful lifetime. But it means something mechanically different for keys vs. secrets:
+
+**Secret rotation** — the *value* changes. You (or an automated process) generate a new API key / password at the source system, store it as a **new version** of the same secret in Key Vault, and consumers pick up the new version. The challenge is coordination: the secret usually lives in *two* places (Key Vault *and* the third-party system that actually validates it), so rotation means updating both, ideally with an overlap window where *both* old and new are valid so in-flight requests don't fail. Key Vault versions every secret, so the old value remains retrievable during the cutover. Apps pick up the new value either on restart, or live if they use `IOptionsMonitor` + `AddAzureKeyVault(..., reloadInterval)` (see "production-grade" below).
+
+**Key rotation** — a *new key version* is generated inside the Vault, and new crypto operations use it, but here's the twist that doesn't apply to secrets: **old key versions are usually kept active**, because data encrypted/signed with the *previous* key still needs the previous key to decrypt/verify it. So key rotation is additive (new version for new operations, old versions retained for old data) rather than a straight replace. Azure Key Vault can **auto-rotate keys** on a configured policy (generate a new version every N days) natively — a first-class feature for keys.
+
+**The practical difference in one line:** rotating a *secret* means "the value everything uses changes, coordinate the swap"; rotating a *key* means "add a new key version for new work while keeping old versions to service old data." Secret rotation is mostly a *coordination* problem; key rotation is mostly a *versioning* problem.
+
 ## What's real vs. reference-only in this repo
 
 This code is correct and would work as-is against a real Azure Key Vault with a Managed Identity assigned. It has **not** been run against a real Vault in this environment — there's no free local emulator for Key Vault (unlike Blob Storage's Azurite), and no Azure subscription available here. What *is* verified: the `IOptionsSnapshot`/`IOptionsMonitor` binding itself, tested locally by falling through to `appsettings.Development.json` (see `docs/ARCHITECTURE.md` for exactly what was and wasn't run).
@@ -144,6 +170,15 @@ Two: `Azure.Extensions.AspNetCore.Configuration.Secrets` (the configuration prov
 
 **Q: What actually goes in appsettings.json when you use Key Vault — do the secrets live there?**
 No — the secrets never touch `appsettings.json`. The only Key-Vault-related thing in config is the non-secret *pointer* to the Vault (`KeyVault:Uri`, just a URL). The secrets are layered into `IConfiguration` at runtime by the Key Vault provider, so committed config files only ever hold non-secret values like `BaseUrl`. Locally, fake secrets go in `appsettings.Development.json` (with `KeyVault:Uri` omitted so no real Vault call happens); in Azure, `KeyVault__Uri` is set as an App Service application setting rather than edited into the file.
+
+**Q: What's the difference between a Key and a Secret in Key Vault?**
+A **secret** is passive storage — an arbitrary value (API key, connection string, password) that Key Vault holds and hands back to you verbatim; your app receives and uses the actual value. A **key** is a cryptographic key whose private material is generated in the Vault and **can never be exported** — instead of retrieving it, your app sends data to the Vault to be signed/encrypted/decrypted *with* that key, and only the result comes back. Secrets are for "store this value safely"; keys are for "perform crypto without ever exposing the key." (Certificates are a third type, managed as a key+secret pair.)
+
+**Q: What's the difference between key rotation and secret rotation?**
+Secret rotation replaces the *value*: you generate a new credential at the source, store it as a new version in Key Vault, and coordinate the swap — usually with an overlap window where both old and new are valid, because the secret typically also lives in the external system that validates it. Key rotation is additive: a new key *version* is generated for new operations, but old versions are retained because data already encrypted/signed with them still needs them to decrypt/verify. So secret rotation is mainly a coordination problem (two places to update), while key rotation is mainly a versioning problem (keep old versions alive for old data). Key Vault can auto-rotate keys on a policy natively.
+
+**Q: When a secret is rotated, how does a running app pick up the new value without a redeploy?**
+If it reads config via `IOptionsMonitor<T>` and Key Vault was added with a `reloadInterval`, the provider periodically re-fetches secrets and the app sees the new version live. Without that, the app reads the value once at startup and needs a restart to pick up a rotated secret. This is the concrete reason `IOptionsMonitor` exists and matters (see the IOptions table above).
 
 **Q: What would you change to make this production-grade?**
 Add `ReloadInterval` to `AddAzureKeyVault` so rotated secrets get picked up without a restart; scope the Managed Identity's Vault access to `get`/`list` only (not `set`/`delete`) via Key Vault's RBAC or access policies; and use `IOptionsMonitor` anywhere a secret might rotate while the app is running, so the app doesn't need restarting to pick up a rotated key.

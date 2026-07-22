@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>HighFidelity Azure App Service — static file demo</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 40rem; margin: 3rem auto; padding: 0 1rem; line-height: 1.5; }
+    code { background: #f2f2f2; padding: 0.1rem 0.3rem; border-radius: 3px; }
+    .note { color: #555; font-size: 0.9rem; }
+  </style>
+</head>
+<body>
+  <h1>Static file served by UseStaticFiles()</h1>
+  <p>
+    This page is a plain file at <code>wwwroot/index.html</code>. It reached your
+    browser via <code>app.UseStaticFiles()</code> in <code>Program.cs</code> —
+    <strong>no controller, no routing, no MVC</strong> was involved. The static-files
+    middleware matched the request path to a file on disk and returned it directly.
+  </p>
+  <p class="note">
+    Note: the app root <code>/</code> is redirected to <code>/swagger</code> by a
+    MapGet in Program.cs, so open <code>/index.html</code> explicitly to see this page.
+    See <code>docs/ICONFIGURATION.md</code> for how the middleware pipeline and
+    IConfiguration fit together.
+  </p>
+</body>
+</html>
