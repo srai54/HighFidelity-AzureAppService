@@ -43,7 +43,10 @@ docs/
   SERVICE_BUS_DEAD_LETTER_QUEUE.md → what a DLQ is, sending to it (dead-lettering), reading from it
   SAGA_PATTERN.md              → distributed transactions across services (choreography vs orchestration)
   SERVICE_BUS_FILTERS.md       → subscription filters in depth (rules, $Default, SQL/correlation, actions)
-  BLOB_STORAGE.md              → theory + interview Q&A
+  BLOB_STORAGE.md              → blob types (Block/Append/Page) + interview Q&A
+  AZURE_STORAGE.md             → account, private/anonymous access, virtual dirs, connecting, listing, SAS, Postman
+  AZURE_STORAGE_QUEUE.md       → Storage Queues: intro, advantages, fan-out, delete message, vs Service Bus
+  AZURE_FILE_SHARE.md          → Azure Files (SMB share): concept, use cases, mount demo
   RESILIENCE_POLLY.md          → theory + interview Q&A
   DURABLE_FUNCTIONS.md         → theory + interview Q&A
   MANAGED_IDENTITY_ENTRA_ID.md → theory + interview Q&A

@@ -26,6 +26,80 @@ All three live in `src/Functions/`, one file each:
 - **`TimerTriggerFunction.cs`** — `[TimerTrigger("0 */5 * * * *")]`, an NCRONTAB expression (6 fields — includes seconds, unlike standard 5-field cron) meaning "every 5 minutes." Verified locally by temporarily changing the schedule to every 10 seconds and confirming it fired three times in a row in the Functions host log, then reverting to the real 5-minute schedule before committing.
 - **`OrderCreatedFunction.cs`** — `[ServiceBusTrigger("orders", Connection = "ServiceBusConnection")]`. This is the receiver half of the Service Bus publisher/receiver pair — see `docs/SERVICE_BUS.md`. Confirmed registering correctly with the Functions host, and confirmed failing to *start listening* without a real Service Bus connection string configured (expected — no local Service Bus emulator was available; this is documented as reference-only, not fully exercised end-to-end).
 
+## The full trigger & binding catalogue
+
+This repo ships HTTP, Timer, and Service Bus triggers, but Functions supports many
+more — and the concept that ties them together is **triggers vs. bindings**:
+
+- **Trigger** — *what invokes the function.* Exactly **one** per function, and it also
+  provides the input data. (Every function must have exactly one trigger.)
+- **Input binding** — *extra data pulled in* for you before the function runs (e.g.
+  read a specific blob or a Cosmos document by id). Optional, zero or more.
+- **Output binding** — *where results go* after the function runs (e.g. write a blob,
+  send a queue/Service Bus message) without you constructing the client yourself.
+  Optional, zero or more.
+
+Bindings are **declarative** — you attach an attribute and the runtime handles the
+client/connection plumbing. The connection info for any trigger/binding comes from an
+**app setting** whose name you reference (like `Connection = "ServiceBusConnection"` in
+this repo), not a hardcoded string.
+
+### The common triggers
+
+| Trigger | Fires when… | Typical use |
+|---|---|---|
+| **HTTP** | a URL is called | APIs, webhooks (in this repo: `HttpTriggerFunction`) |
+| **Timer** | a schedule (NCRONTAB) elapses | nightly/periodic jobs (`TimerTriggerFunction`) |
+| **Service Bus** | a message lands on a queue/topic subscription | decoupled processing (`OrderCreatedFunction`) |
+| **Queue Storage** | a message lands on a **Storage Queue** | cheap/simple background work, fan-out (see `docs/AZURE_STORAGE_QUEUE.md`) |
+| **Blob Storage** | a **blob is created/updated** in a container | "process a file when it's uploaded" (thumbnail, virus scan, import) |
+| **Event Grid** | a discrete event is published (incl. Blob-created events) | reactive, low-latency event handling (preferred over Blob trigger at scale) |
+| **Event Hub** | events arrive on a stream | high-throughput telemetry/streaming ingestion |
+| **Cosmos DB** | documents change (change feed) | react to data changes, materialized views |
+| **Durable** (orchestration/activity/entity) | orchestrator drives them | stateful workflows (see `docs/DURABLE_FUNCTIONS.md`) |
+
+### The Blob trigger, and the Event Grid caveat worth knowing
+
+A **Blob trigger** runs your function when a blob appears/changes:
+```csharp
+[Function("ThumbnailMaker")]
+public async Task Run(
+    [BlobTrigger("uploads/{name}", Connection = "StorageConnection")] Stream blob,
+    string name) { /* ... */ }
+```
+The interview nuance: the **classic (polling) Blob trigger can be slow/unreliable at
+scale** — it scans the container for changes and can miss or lag on high volume. The
+recommended modern approaches are the **Event Grid-based blob trigger** (source =
+`EventGrid`) or an **Event Grid trigger** subscribed to Blob "created" events — both
+are push-based and near-instant. Knowing "prefer Event Grid over the polling blob
+trigger for scale/latency" is a common AZ-204 point.
+
+### Input & output bindings (example)
+
+One function can trigger on one thing and bind to others — e.g. triggered by an HTTP
+call, read a blob as input, and write a queue message as output, all declaratively:
+```csharp
+[Function("Import")]
+[QueueOutput("processed", Connection = "StorageConnection")]   // return value -> queue message
+public string Run(
+    [HttpTrigger("post")] HttpRequestData req,
+    [BlobInput("config/settings.json", Connection = "StorageConnection")] string settings)
+{
+    // 'settings' was fetched from Blob Storage for you; the returned string is
+    // enqueued to the 'processed' Storage Queue for you.
+    return "done";
+}
+```
+This is the payoff of bindings: no `BlobClient`/`QueueClient` construction, no
+connection wiring in code — just attributes.
+
+### Auto-complete on message triggers (recap)
+
+For the Service Bus / Queue triggers, the runtime **auto-completes** the message when
+your function returns successfully and abandons it on an exception (so it retries and
+eventually dead-letters). To settle manually, disable auto-complete and use the
+message-actions parameter — see the Functions-bindings note in `docs/SERVICE_BUS.md`.
+
 ## What "return value" means differs by trigger
 
 The HTTP trigger returns an `IActionResult` — that becomes the actual HTTP response, same idea as a Controller. The Timer trigger returns `void` — there's no caller waiting for a response, so there's nothing to return *to*. The Service Bus trigger also effectively returns nothing meaningful to the caller (there is no caller) — instead, whether the method **throws or returns normally** is what matters: returning normally completes (removes) the message from the queue; throwing leaves it for the queue's automatic retry, and eventually the dead-letter subqueue.
@@ -51,6 +125,25 @@ The message is NOT completed/removed from the queue. Service Bus's own retry pol
 
 **Q: What's the Consumption plan and why does it matter for Function Apps specifically?**
 It's a billing model where you pay per execution + execution duration, with no charge for idle time, and the platform automatically scales the number of running instances (including to zero) based on load. It's the pricing argument for choosing a Function over an always-on App Service for anything that doesn't run constantly — a nightly timer job or a queue processor that's idle most of the day.
+
+**Q: What's the difference between a trigger and a binding?**
+A trigger is what invokes the function and supplies its input — exactly one per
+function. Bindings are declarative connections to other services: input bindings pull
+extra data in before the function runs, output bindings send results out after — zero
+or more of each, optional. Both remove client/connection plumbing from your code; you
+attach an attribute and the runtime handles it.
+
+**Q: Name several Azure Functions triggers beyond HTTP/Timer.**
+Service Bus (queue/topic message), Queue Storage (Storage Queue message), Blob Storage
+(blob created/updated), Event Grid (discrete events, incl. blob-created), Event Hub
+(streaming/telemetry), Cosmos DB (change feed), and the Durable
+orchestration/activity/entity triggers.
+
+**Q: Why prefer an Event Grid-based blob trigger over the classic Blob trigger?**
+The classic Blob trigger polls the container for changes, which can lag or miss events
+at high volume. The Event Grid-based blob trigger (or an Event Grid trigger subscribed
+to Blob "created" events) is push-based and near-instant, so it scales and reacts far
+better — the recommended approach for production blob-driven processing.
 
 **Q: This repo's OrderCreatedFunction failed to start locally — is that a bug?**
 No — it's `[ServiceBusTrigger("orders", Connection = "ServiceBusConnection")]` failing because no real Service Bus namespace/connection string was configured, which is expected in this environment (no free local Service Bus emulator was available, unlike Blob Storage's Azurite). The HTTP and Timer triggers in the same host started and ran correctly in the same process — one trigger failing to bind doesn't take down the others.

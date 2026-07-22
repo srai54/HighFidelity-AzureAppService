@@ -30,6 +30,13 @@ matching topic heading as you find them.
 - 🔧 Code: `src/WebApp/Services/ServiceBusPublisher.cs`, `Controllers/OrdersController.cs` (publisher); `src/Functions/OrderCreatedFunction.cs` (receiver)
 - 🛠️ Provisioning: [`scripts/05-service-bus.azcli`](../scripts/05-service-bus.azcli)
 
+## Azure Storage (Blob, Queue, File)
+
+- 📺 **YouTube playlist:** https://www.youtube.com/playlist?list=PLU1w_BFZFd2oCFnnuCv9AeD2ccsWM59My
+- 📄 In-repo notes: [`docs/BLOB_STORAGE.md`](BLOB_STORAGE.md) (blob types), [`docs/AZURE_STORAGE.md`](AZURE_STORAGE.md) (account, access levels, SAS, connecting, listing, Postman), [`docs/AZURE_STORAGE_QUEUE.md`](AZURE_STORAGE_QUEUE.md), [`docs/AZURE_FILE_SHARE.md`](AZURE_FILE_SHARE.md)
+- 🔧 Code: `src/WebApp/Services/BlobStorageService.cs`, `Controllers/BlobStorageController.cs`
+- 🛠️ Provisioning: [`scripts/06-blob-storage.azcli`](../scripts/06-blob-storage.azcli)
+
 ---
 
 ## Other topics (add references here as you find them)

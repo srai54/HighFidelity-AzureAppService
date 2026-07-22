@@ -48,6 +48,16 @@ if (offset % 512 != 0 || data.Length % 512 != 0)
 ```
 This single constraint is *why* page blobs aren't used for general file storage — nobody wants to think about 512-byte alignment to store a PDF. It only makes sense when the thing you're storing is itself naturally block-addressed, like a virtual disk.
 
+## Related storage topics
+
+This doc is specifically about the **three blob types**. The account-level concepts
+around them live in sibling docs:
+- **`docs/AZURE_STORAGE.md`** — the storage account, private vs. anonymous access,
+  virtual directories, connecting (connection string / Managed Identity / Storage
+  Explorer), listing blobs, **SAS**, and accessing a blob from **Postman**.
+- **`docs/AZURE_STORAGE_QUEUE.md`** — Storage Queues (the queue service in the account).
+- **`docs/AZURE_FILE_SHARE.md`** — Azure Files (the SMB file-share service).
+
 ## What's real vs. reference-only in this repo
 
 Fully real — this is the one topic in this repo that was tested end-to-end, not just written to compile. See `docs/ARCHITECTURE.md` for the full picture of what was and wasn't verified across all five topics.
