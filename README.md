@@ -38,6 +38,7 @@ docs/
   SERVICE_BUS.md               → theory + interview Q&A
   SERVICE_BUS_PORTAL_GUIDE.md  → portal click-through: create namespace/queue, send/receive, connection strings
   SEND_TO_SERVICE_BUS_FROM_VISUAL_STUDIO.md → run the WebApp in VS and publish a message via Swagger
+  SERVICE_BUS_SENDER_CONSOLE.md → minimal console sender from scratch (NuGet → client → sender → send)
   BLOB_STORAGE.md              → theory + interview Q&A
   RESILIENCE_POLLY.md          → theory + interview Q&A
   DURABLE_FUNCTIONS.md         → theory + interview Q&A
@@ -51,6 +52,9 @@ docs/
 scripts/
   00..09 + 99 .azcli           → commented az CLI provisioning scripts, one per feature (learning
                                  reference — NOT auto-run; you run them yourself after `az login`)
+samples/
+  ServiceBusSenderConsole/     → minimal standalone console app that sends one message to a queue
+                                 (paired with docs/SERVICE_BUS_SENDER_CONSOLE.md)
 ```
 
 Each `docs/*.md` file follows the same shape: a plain-English explanation (with an analogy, aimed at actually sticking in memory rather than reading like a spec), how this repo implements it with real file references, and a set of interview questions with real answers at the end.
