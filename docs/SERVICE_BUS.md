@@ -123,8 +123,14 @@ This is deliberately in the **separate Functions project**, not the WebApp — i
 
 ## The SDK types — Client, Sender, Receiver, Processor
 
-Four types in `Azure.Messaging.ServiceBus` do all the work. Knowing what each is
-for (and its lifetime) is a very common interview drill:
+Four types in **`Azure.Messaging.ServiceBus`** do all the work. Knowing what each is
+for (and its lifetime) is a very common interview drill.
+
+> **Use the right SDK.** `Azure.Messaging.ServiceBus` is the current package (the one
+> this repo uses). The older `Microsoft.Azure.ServiceBus` (and the even older
+> `WindowsAzure.ServiceBus`) are **deprecated** — don't learn or use them for new
+> work; the type names and patterns below are the current SDK.
+
 
 | Type | Role | Lifetime | Direction |
 |---|---|---|---|
@@ -149,8 +155,16 @@ caches senders in a `ConcurrentDictionary`:
 var sender = _senders.GetOrAdd(queueName, _client.CreateSender);
 await sender.SendMessageAsync(new ServiceBusMessage(body) { ContentType = "application/json", MessageId = ... });
 ```
-Also does batching (`SendMessagesAsync` / `CreateMessageBatchAsync`) and scheduled
-messages (`ScheduleMessageAsync`) when you need them.
+Two sender features worth knowing by name:
+- **Batching** — send many messages in one network call. `SendMessagesAsync(IEnumerable)`
+  is the simple form; `CreateMessageBatchAsync()` gives a `ServiceBusMessageBatch` you
+  `TryAddMessage` into (it refuses once the batch hits the size limit, so you can't
+  overflow a single send). Far more efficient than a `SendMessageAsync` per message.
+- **Scheduled messages** — deliver a message *later* instead of now, two equivalent ways:
+  set `message.ScheduledEnqueueTime = DateTimeOffset.UtcNow.AddMinutes(10)` and send
+  normally, or call `sender.ScheduleMessageAsync(message, enqueueTime)` (which returns a
+  **sequence number** you can pass to `CancelScheduledMessageAsync` to cancel it before
+  it fires). Use it for "process this in 10 minutes", delayed retries, reminders, etc.
 
 ### `ServiceBusReceiver` — manual (pull) receive
 You control the loop: ask for messages, process, then explicitly settle each one.
@@ -431,6 +445,83 @@ are a Standard/Premium feature (not Basic).
 > across **separate services/databases** — where no shared transaction exists —
 > you need the **Saga pattern** instead: see `docs/SAGA_PATTERN.md`.
 
+## Sessions — FIFO ordering and message grouping
+
+By default, competing consumers pull in parallel, so **ordering isn't guaranteed**
+(see load balancing above). **Sessions** are how you get strict **FIFO order for a
+related group** of messages while still load-balancing across groups.
+
+- Enable it on the queue/subscription at creation: **`RequiresSession = true`**
+  (can't be changed later).
+- The publisher stamps each message with a **`SessionId`** (e.g. the customer id,
+  the order id — whatever defines "these must be in order relative to each other").
+- A **session receiver** locks an *entire session* to itself and processes that
+  session's messages in strict order: `client.AcceptNextSessionAsync(queueName)`
+  gives you a `ServiceBusSessionReceiver` bound to one session; the
+  `ServiceBusProcessor` equivalent is a **`ServiceBusSessionProcessor`**
+  (`CreateSessionProcessor`).
+- Different sessions still process **in parallel** across receivers — you get
+  ordering *within* a session and throughput *across* sessions. Sessions also give
+  you a per-session **state** store (`SetSessionStateAsync`) for stateful workflows.
+
+Sessions need **Standard or Premium** (not Basic). Trade-off: a session is handled
+by one receiver at a time, so a single hot session can't be parallelized — choose a
+`SessionId` with enough spread.
+
+## Lock duration, renewal, and idempotency
+
+**Lock duration** — in PeekLock mode, a received message is locked for the queue's
+**lock duration** (default 30s, max 5 min). You must settle it before the lock
+expires, or Service Bus assumes you failed, releases it, and **redelivers** it
+(incrementing delivery count).
+
+**Lock renewal** — if processing legitimately takes longer than the lock duration,
+don't let the lock lapse:
+- Manually: `receiver.RenewMessageLockAsync(message)` to extend it.
+- Automatically: `ServiceBusProcessor` **auto-renews** locks up to
+  `MaxAutoLockRenewalDuration` (a `ServiceBusProcessorOptions` setting) — the usual
+  reason to prefer the processor for long-running work over a manual receiver.
+- Symptom of getting this wrong: a `ServiceBusException` with reason
+  `MessageLockLost` when you finally try to complete.
+
+**Idempotency (because delivery is at-least-once)** — Service Bus guarantees
+*at-least-once* delivery: a message **can be delivered more than once** (a redelivery
+after a lock timeout, a crash after processing but before completing, etc.). So your
+**receiver logic must be idempotent** — processing the same message twice must not
+double-charge, double-ship, or double-insert. Typical techniques: dedupe on a
+business key / the `MessageId`, use "insert if not exists" / upserts, or make the
+operation naturally idempotent. This is a favorite interview point: *exactly-once
+processing isn't something the broker gives you — you achieve it with at-least-once
+delivery plus an idempotent consumer.*
+
+## Auto-forwarding
+
+**Auto-forwarding** chains entities so messages sent to one queue/subscription are
+**automatically moved to another** queue or topic in the same namespace, with no code
+in between (`ForwardTo` on the entity). Uses:
+- Fan a **topic subscription** straight into a downstream **queue** a service already
+  reads, so that service doesn't need to know about the topic.
+- Build scatter-gather / aggregation topologies (many subscriptions → one queue).
+
+It's a configuration property, not a runtime API — set `ForwardTo` (and optionally
+`ForwardDeadLetteredMessagesTo`) when creating the entity. Adds a small latency hop;
+there are limits on chain depth.
+
+## Using Service Bus from Azure Functions (bindings)
+
+This repo's receiver is the Functions **`[ServiceBusTrigger]`** (`OrderCreatedFunction`),
+which is the most exam-relevant integration. Two things to know:
+- **Auto-complete:** by default the Functions Service Bus trigger **completes the
+  message automatically** when your function returns without throwing, and abandons
+  (→ eventual dead-letter) if it throws. To settle messages yourself, turn
+  auto-complete **off** (`autoCompleteMessages = false` in host config / binding) and
+  complete/abandon/dead-letter explicitly via the `ServiceBusMessageActions`
+  parameter. Knowing the default (auto-complete on) vs. how to opt out is a common
+  question.
+- **Output binding:** a function can also *send* to Service Bus via an output binding
+  (return value / `[ServiceBusOutput]`) instead of constructing a `ServiceBusSender`
+  by hand — the binding handles the client for you.
+
 ## What's real vs. reference-only in this repo
 
 The publisher and receiver code are both correct and match the real Azure Service Bus SDK surface exactly as they'd be used against a real namespace. Neither has been run end-to-end here — Azurite (used for Blob Storage) does **not** emulate Service Bus, and Microsoft's Service Bus emulator requires Docker, which wasn't available in this environment. The receiver's registration with the Functions host *was* confirmed (it correctly reported "connection string not configured" rather than crashing the whole host — see `docs/FUNCTION_APPS.md`), which at least proves the trigger attribute and method signature are valid.
@@ -486,6 +577,24 @@ SQL filters (a SQL-92-like boolean expression over the message's properties, mos
 
 **Q: How does correlation work in Service Bus?**
 Via the `CorrelationId` system property. In request/reply, the sender sets `ReplyTo` (where it wants the answer) and a `CorrelationId`; the responder echoes that `CorrelationId` on the reply so the sender can match the reply to the originating request among many in flight. Correlation filters on subscriptions can also route by `CorrelationId`/`Subject`. Keep correlation data in the property, not the body, so filters and the broker can act on it without parsing the payload — and don't confuse it with Application Insights' diagnostic trace correlation, which is a separate, tracing-level id.
+
+**Q: How do you guarantee ordered processing of related messages?**
+Sessions. Enable `RequiresSession = true` on the queue/subscription, stamp related messages with the same `SessionId`, and consume with a session receiver (`AcceptNextSessionAsync`) or `ServiceBusSessionProcessor` — that receiver locks the whole session and processes its messages in strict FIFO order. Different sessions still run in parallel across receivers, so you keep throughput across groups while getting ordering within a group. (Standard/Premium only.)
+
+**Q: A message takes longer to process than the lock duration — what happens and how do you handle it?**
+If you don't settle before the lock expires, Service Bus releases the message and redelivers it (you'll get `MessageLockLost` if you then try to complete). Handle it by renewing the lock — `RenewMessageLockAsync` manually, or let `ServiceBusProcessor` auto-renew up to `MaxAutoLockRenewalDuration`. That auto-renewal is a key reason to use the processor for long-running work.
+
+**Q: Service Bus is at-least-once — how do you get exactly-once *processing*?**
+You don't get it from the broker; you build it. Because a message can be delivered more than once, make the receiver idempotent — dedupe on a business key or `MessageId`, use upserts/"insert if not exists", or design naturally idempotent operations — so reprocessing the same message has no extra effect. Exactly-once processing = at-least-once delivery + an idempotent consumer.
+
+**Q: What's a scheduled message?**
+A message you enqueue now but that becomes available for delivery at a future time — set `ScheduledEnqueueTime` (or `ScheduleMessageAsync`, which returns a sequence number you can use to cancel it). Used for delayed processing, reminders, or delayed retries without holding the message in your own app.
+
+**Q: What is auto-forwarding?**
+A configured chain (`ForwardTo`) that automatically moves messages from one queue/subscription to another queue/topic in the same namespace, no code in between — e.g. funneling a topic subscription into a queue a service already consumes. Set at entity creation; adds a small hop and has chain-depth limits.
+
+**Q: With the Functions Service Bus trigger, when does the message get completed?**
+By default, automatically: the trigger completes the message when your function returns successfully and abandons it if it throws. To control settlement yourself, disable auto-complete (`autoCompleteMessages = false`) and use the `ServiceBusMessageActions` to complete/abandon/dead-letter explicitly.
 
 **Q: What is duplicate detection and what does it key on?**
 It makes Service Bus discard a message whose `MessageId` it has already seen within a configured time window, so a publisher that retries a send (e.g. after a network blip) doesn't cause the consumer to process the same message twice. You enable it at queue/topic creation (`RequiresDuplicateDetection`, can't be changed later) and set the history window (default 10 min). The gotcha: it keys on `MessageId`, so you must assign a deterministic, business-meaningful id (like the order id) — random per-send ids (e.g. `Guid.NewGuid()`) never dedupe.

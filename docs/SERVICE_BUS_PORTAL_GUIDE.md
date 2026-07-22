@@ -231,10 +231,13 @@ without a window where *no* valid key exists. (Same idea as secret rotation in
 ### SAS vs. RBAC (the modern alternative)
 SAS policies authenticate by **key** (something you store and must rotate). The
 newer, preferred option in Azure is **RBAC + Managed Identity / `DefaultAzureCredential`**:
-grant an identity the `Azure Service Bus Data Sender` or `Data Receiver` role and
-there's **no key at all** to store or leak (see `docs/MANAGED_IDENTITY_ENTRA_ID.md`).
-Rule of thumb: SAS for quick/local/demo or non-Azure clients; RBAC + Managed
-Identity when the sender/receiver runs in Azure.
+grant an identity one of the three built-in Service Bus data roles —
+**`Azure Service Bus Data Sender`** (send only), **`Azure Service Bus Data Receiver`**
+(receive only), or **`Azure Service Bus Data Owner`** (full send + receive + manage) —
+and there's **no key at all** to store or leak (see `docs/MANAGED_IDENTITY_ENTRA_ID.md`).
+Mirror the SAS least-privilege idea: give a publisher Data Sender and a consumer Data
+Receiver, not Data Owner. Rule of thumb: SAS for quick/local/demo or non-Azure
+clients; RBAC + Managed Identity when the sender/receiver runs in Azure.
 
 ---
 
