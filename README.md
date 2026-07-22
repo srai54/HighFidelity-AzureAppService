@@ -1,26 +1,48 @@
 # HighFidelity Azure App Service — Study Repo
 
-A local-only study/interview-prep project (**not pushed to any remote — this repo lives on this machine only**), sitting alongside `HighFidelity-Api` and `HighFidelity-Ui` as a third folder in the same workspace. Its job isn't to be a product — it's real, running, verified code plus plain-English notes for five Azure concepts that come up constantly in backend/cloud interviews:
+A local-only study/interview-prep project (**not pushed to any remote — this repo lives on this machine only**, tracked instead on GitHub in its own repo/branch — see below), sitting alongside `HighFidelity-Api` and `HighFidelity-Ui` as a third folder in the same workspace. Its job isn't to be a product — it's real, working code plus plain-English notes for the Azure concepts that come up constantly in backend/cloud interviews.
 
+**Note:** the section header above is historical — this repo was later pushed to `github.com/srai54/HighFidelity-AzureAppService` on branch `azureappserviceinitial`, at the user's explicit request, once they'd decided they wanted a backup/reference copy off this machine.
+
+The original five:
 1. **Key Vault + IOptions** — secrets management, injected via the options pattern
 2. **Application Insights** — telemetry/observability
 3. **Function Apps** — HTTP, Timer, and event (Service Bus) triggers
 4. **Service Bus** — a queue, with a publisher and a receiver
 5. **Blob Storage** — the three blob types (Block, Append, Page)
 
+Plus the extra topics that round out a typical Azure backend interview:
+
+6. **Resilience (Polly)** — retry, circuit breaker, timeout on outbound HTTP calls
+7. **Durable Functions** — stateful orchestration (fan-out/fan-in, chaining) on top of Functions
+8. **Managed Identity + Entra ID** — how the app authenticates *outbound* to Azure (Managed Identity) vs. how it validates *inbound* callers (Entra ID/JWT bearer)
+9. **Redis Cache** — the cache-aside pattern via `IDistributedCache`
+10. **Azure SQL vs. Cosmos DB** — relational vs. NoSQL, and why partition keys matter
+11. **Messaging comparison** — Service Bus vs. Event Grid vs. Storage Queues vs. Event Hub, when to use which
+12. **App Service deployment slots & scaling** — blue-green swaps, scale up vs. scale out
+
 ## Structure
 
 ```
 src/
-  WebApp/       → ASP.NET Core Web API — the "App Service" — Key Vault, App Insights, Blob Storage, Service Bus publisher
-  Functions/    → Azure Functions (isolated worker) — HTTP trigger, Timer trigger, Service Bus trigger (the receiver)
+  WebApp/       → ASP.NET Core Web API — the "App Service" — Key Vault, App Insights, Blob Storage, Service Bus publisher,
+                  Resilience/Polly, Managed Identity + Entra ID, Redis cache, Cosmos DB
+  Functions/    → Azure Functions (isolated worker) — HTTP trigger, Timer trigger, Service Bus trigger (the receiver),
+                  Durable Functions orchestration
 docs/
-  ARCHITECTURE.md          → how the two projects fit together, what's real vs. reference-only, honestly
-  KEYVAULT.md              → theory + interview Q&A
-  APPLICATION_INSIGHTS.md  → theory + interview Q&A
-  FUNCTION_APPS.md         → theory + interview Q&A
-  SERVICE_BUS.md           → theory + interview Q&A
-  BLOB_STORAGE.md          → theory + interview Q&A
+  ARCHITECTURE.md              → how the two projects fit together, what's real vs. reference-only, honestly
+  KEYVAULT.md                  → theory + interview Q&A
+  APPLICATION_INSIGHTS.md      → theory + interview Q&A
+  FUNCTION_APPS.md             → theory + interview Q&A
+  SERVICE_BUS.md               → theory + interview Q&A
+  BLOB_STORAGE.md              → theory + interview Q&A
+  RESILIENCE_POLLY.md          → theory + interview Q&A
+  DURABLE_FUNCTIONS.md         → theory + interview Q&A
+  MANAGED_IDENTITY_ENTRA_ID.md → theory + interview Q&A
+  REDIS_CACHE.md               → theory + interview Q&A
+  SQL_VS_COSMOS.md             → theory + interview Q&A
+  MESSAGING_COMPARISON.md      → theory + interview Q&A (conceptual — no dedicated code)
+  DEPLOYMENT_SLOTS_SCALING.md  → theory + interview Q&A (conceptual — no dedicated code)
 ```
 
 Each `docs/*.md` file follows the same shape: a plain-English explanation (with an analogy, aimed at actually sticking in memory rather than reading like a spec), how this repo implements it with real file references, and a set of interview questions with real answers at the end.
@@ -36,6 +58,14 @@ Each `docs/*.md` file follows the same shape: a plain-English explanation (with 
 | **Key Vault + IOptions** | ⚠️ The `IOptionsSnapshot`/`IOptionsMonitor` binding pattern is verified locally (falls through to `appsettings.Development.json`). The actual Key Vault call has not been made — no free local emulator exists for Key Vault, and no real Vault was available here |
 | **Service Bus** | ⚠️ Publisher and receiver code is correct and matches the real SDK surface, but neither has sent/received an actual message — no local Service Bus emulator was available (it exists but needs Docker, which isn't installed here) |
 | **Application Insights** | ⚠️ Verified the app starts correctly with no connection string configured (a real bug was hit and fixed here — see `docs/APPLICATION_INSIGHTS.md`). No telemetry has actually been shipped to a real Application Insights resource |
+| **Resilience (Polly)** | 🔴 Compiles cleanly, matches the real `Microsoft.Extensions.Http.Resilience` API. Could not be run — see the Smart App Control note below |
+| **Durable Functions** | 🔴 Compiles cleanly, matches the real isolated-worker Durable Task API. Could not be run — same blocker |
+| **Managed Identity + Entra ID** | ⚠️ Compiles cleanly. No real Entra ID tenant was available to validate a token against even without the runtime blocker |
+| **Redis Cache** | ✅ The cache-aside pattern genuinely works against `IDistributedCache`'s in-memory implementation (a real, non-mocked backing store) — just not against an actual Redis instance (no Docker/local Redis here) |
+| **Azure SQL vs. Cosmos DB** | ⚠️ Cosmos code compiles cleanly, matches the real SDK. No Cosmos DB Emulator or real account was available |
+| **Messaging comparison / Deployment slots & scaling** | 📘 Conceptual only, by design — no dedicated code, these are "which one and why" and infrastructure-config topics |
+
+**New this round — a machine-level blocker, not a code issue:** partway through adding the extra topics above, this machine's Windows **Smart App Control** policy started blocking `dotnet run`/`func start` from loading their own freshly-built binaries (confirmed via the CodeIntegrity event log — see `docs/ARCHITECTURE.md`). This affected both `src/WebApp` and `src/Functions` regardless of which feature was being tested, which is why several of the newer additions above are marked "compiles but couldn't run" even where the underlying pattern (like Redis's cache-aside logic) is otherwise simple to verify. It has nothing to do with any of the earlier ✅ results, which were captured in an earlier session before this restriction was in effect.
 
 See `docs/ARCHITECTURE.md` for the full reasoning behind each of these.
 
@@ -57,4 +87,4 @@ func start
 # -> http://localhost:7071/api/greet/{name}
 ```
 
-Key Vault and Service Bus need real Azure resources (a Vault + Managed Identity; a Service Bus namespace + connection string) to actually exercise — see each topic's doc for exactly what config keys to set.
+Key Vault, Service Bus, Cosmos DB, Redis, and Entra ID all need real Azure resources (or, for Redis/Cosmos, an emulator not installed in this environment) to actually exercise — see each topic's doc for exactly what config keys to set. The Resilience (`/api/resilience/...`) and Redis cache-aside (`/api/cache-demo/...`) demo endpoints need no external dependency at all beyond `dotnet run` itself — they're the two easiest things in this repo to try first if you're picking this back up on a machine without the Smart App Control restriction.

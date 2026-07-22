@@ -1,6 +1,7 @@
 using Azure.Identity;
 using Azure.Messaging.ServiceBus;
 using Azure.Storage.Blobs;
+using Microsoft.Identity.Web;
 using WebApp.Configuration;
 using WebApp.Services;
 
@@ -64,6 +65,71 @@ if (!string.IsNullOrWhiteSpace(serviceBusConnectionString))
     builder.Services.AddSingleton<IServiceBusPublisher, ServiceBusPublisher>();
 }
 
+// ── Resilience (Polly, via Microsoft.Extensions.Http.Resilience) ──
+// AddStandardResilienceHandler wires up a whole pipeline in one call: retry
+// (exponential backoff + jitter) -> circuit breaker -> attempt timeout ->
+// overall timeout. It's Polly v8 under the hood. This has nothing to depend
+// on conditionally — there's no "no config" state, so unlike Key Vault /
+// Service Bus above this is always registered. See docs/RESILIENCE_POLLY.md,
+// and ResilienceController for a self-contained way to see it working.
+builder.Services.AddHttpClient("ResilientClient", client =>
+{
+    var baseUrl = builder.Configuration["ResilienceDemo:TargetBaseUrl"] ?? "http://localhost:5175";
+    client.BaseAddress = new Uri(baseUrl);
+})
+.AddStandardResilienceHandler();
+
+// ── Managed Identity + Entra ID auth ──
+// Only wired up when a real tenant is configured (AzureAd:TenantId) — same
+// conditional shape as Key Vault above, for the same reason: nothing to
+// point at locally without a real Azure AD / Entra ID app registration.
+// AddMicrosoftIdentityWebApi validates incoming JWT bearer tokens issued by
+// Entra ID (audience, issuer, signature against the tenant's public keys) —
+// this secures *inbound* calls to this API. That's a different job from
+// DefaultAzureCredential above, which is this API authenticating *outbound*
+// to Key Vault/Storage/Service Bus. See docs/MANAGED_IDENTITY_ENTRA_ID.md for
+// the full picture of both directions plus the Managed Identity story.
+var azureAdTenantId = builder.Configuration["AzureAd:TenantId"];
+if (!string.IsNullOrWhiteSpace(azureAdTenantId))
+{
+    builder.Services.AddAuthentication(Microsoft.Identity.Web.Constants.Bearer)
+        .AddMicrosoftIdentityWebApi(builder.Configuration.GetSection("AzureAd"));
+}
+
+builder.Services.AddAuthorization();
+
+// ── Redis Cache ──
+// No local Redis available in this environment (no Docker), so this falls
+// back to AddDistributedMemoryCache — an in-process, non-shared stand-in
+// that implements the same IDistributedCache interface. Application code
+// (CacheDemoController) is written against IDistributedCache either way and
+// doesn't know or care which backing store is behind it. See
+// docs/REDIS_CACHE.md.
+var redisConnectionString = builder.Configuration["Redis:ConnectionString"];
+if (!string.IsNullOrWhiteSpace(redisConnectionString))
+{
+    builder.Services.AddStackExchangeRedisCache(options =>
+    {
+        options.Configuration = redisConnectionString;
+        options.InstanceName = "HighFidelity:";
+    });
+}
+else
+{
+    builder.Services.AddDistributedMemoryCache();
+}
+
+// ── Cosmos DB ──
+// Only registered when a real account (or the Cosmos DB Emulator) connection
+// string is configured — no local emulator was available in this environment
+// (it's a heavyweight Windows-only install, not attempted here). Same
+// conditional shape as Service Bus above. See docs/SQL_VS_COSMOS.md.
+var cosmosConnectionString = builder.Configuration["Cosmos:ConnectionString"];
+if (!string.IsNullOrWhiteSpace(cosmosConnectionString))
+{
+    builder.Services.AddSingleton(new Microsoft.Azure.Cosmos.CosmosClient(cosmosConnectionString));
+}
+
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
@@ -73,6 +139,11 @@ var app = builder.Build();
 app.UseSwagger();
 app.UseSwaggerUI();
 app.MapGet("/", () => Results.Redirect("/swagger"));
+
+if (!string.IsNullOrWhiteSpace(azureAdTenantId))
+{
+    app.UseAuthentication();
+}
 
 app.UseAuthorization();
 app.MapControllers();
