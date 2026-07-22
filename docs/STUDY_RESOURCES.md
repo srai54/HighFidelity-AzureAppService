@@ -23,12 +23,18 @@ matching topic heading as you find them.
 - 🔧 Code: `src/WebApp/Program.cs`, `Configuration/PaymentGatewayOptions.cs`, `Controllers/PaymentGatewayController.cs`
 - 🛠️ Provisioning: [`scripts/01-keyvault.azcli`](../scripts/01-keyvault.azcli)
 
+## Azure Service Bus
+
+- 📺 **YouTube playlist:** https://www.youtube.com/playlist?list=PLU1w_BFZFd2pW5mcM_aTKCWwJw2sGBA20
+- 📄 In-repo notes: [`docs/SERVICE_BUS.md`](SERVICE_BUS.md), [`docs/MESSAGING_COMPARISON.md`](MESSAGING_COMPARISON.md)
+- 🔧 Code: `src/WebApp/Services/ServiceBusPublisher.cs`, `Controllers/OrdersController.cs` (publisher); `src/Functions/OrderCreatedFunction.cs` (receiver)
+- 🛠️ Provisioning: [`scripts/05-service-bus.azcli`](../scripts/05-service-bus.azcli)
+
 ---
 
 ## Other topics (add references here as you find them)
 
 - **Function Apps** — [`docs/FUNCTION_APPS.md`](FUNCTION_APPS.md), [`docs/DURABLE_FUNCTIONS.md`](DURABLE_FUNCTIONS.md)
-- **Service Bus** — [`docs/SERVICE_BUS.md`](SERVICE_BUS.md), [`docs/MESSAGING_COMPARISON.md`](MESSAGING_COMPARISON.md)
 - **Blob Storage** — [`docs/BLOB_STORAGE.md`](BLOB_STORAGE.md)
 - **Resilience (Polly)** — [`docs/RESILIENCE_POLLY.md`](RESILIENCE_POLLY.md)
 - **Managed Identity + Entra ID** — [`docs/MANAGED_IDENTITY_ENTRA_ID.md`](MANAGED_IDENTITY_ENTRA_ID.md)
