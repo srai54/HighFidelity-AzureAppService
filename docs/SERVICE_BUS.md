@@ -195,6 +195,97 @@ per message (auto-complete on success, retry on throw). The Receiver/Processor
 snippets above are the equivalent you'd write in a non-Functions consumer (a
 console app or a `BackgroundService` in the WebApp).
 
+## Message anatomy — properties, filters & correlation
+
+### A message is body + system properties + application properties
+
+A `ServiceBusMessage` has three parts:
+- **Body** — the actual payload (bytes/text/JSON). The "content."
+- **System (broker) properties** — a fixed set Service Bus itself understands:
+  `MessageId`, `CorrelationId`, `Subject` (a.k.a. Label), `SessionId`, `ContentType`,
+  `TimeToLive`, `ReplyTo`, `To`, etc. These drive built-in behavior (dedup keys on
+  `MessageId`, sessions key on `SessionId`, and so on).
+- **Application properties** — a free-form `IDictionary<string, object>` of your own
+  key/value metadata (`ApplicationProperties`). This travels *with* the message as
+  headers, **separate from the body**.
+
+The reason application properties matter: **a subscription filter can route on them
+without the broker ever reading your body.** You put the routing-relevant facts
+("region", "priority", "amount") in properties, and the body stays opaque.
+
+### Adding custom properties and sending
+
+```csharp
+var message = new ServiceBusMessage(body)
+{
+    ContentType   = "application/json",
+    MessageId     = order.OrderId.ToString(),   // dedup key (see Duplicate detection)
+    Subject       = "OrderCreated",             // a short "type"/category label
+    CorrelationId = correlationId               // for correlating related messages
+};
+
+// custom metadata — routable, and readable by the receiver without parsing the body:
+message.ApplicationProperties["region"]   = "US";
+message.ApplicationProperties["priority"] = "high";
+message.ApplicationProperties["amount"]   = 42.50;
+
+await sender.SendMessageAsync(message);
+```
+On the receive side you read them back: `received.ApplicationProperties["region"]`,
+`received.Subject`, `received.CorrelationId`, etc. (Runnable in
+`samples/ServiceBusSenderConsole`.)
+
+### How subscription filters use properties
+
+Topic **subscriptions** can carry a **filter** so a subscription only receives the
+messages it cares about (see the topic/subscription building blocks above). There
+are three filter kinds:
+
+- **SQL filter** — a SQL-92-like boolean expression evaluated against the message's
+  **system + application properties** (not the body). Most flexible:
+  ```sql
+  amount > 1000 AND region = 'US'
+  ```
+  A subscription with that filter only gets messages whose `ApplicationProperties`
+  satisfy it. (You can also modify properties on match with a **SQL rule action**,
+  e.g. `SET priority = 'escalated'`.)
+- **Correlation filter** — matches on specific system properties (commonly
+  `CorrelationId` and/or `Subject`) and/or exact-match application properties. It's
+  a set of equality checks, not a full expression — **more efficient** than a SQL
+  filter, so prefer it when simple equality is all you need:
+  ```
+  Subject = 'OrderCreated'  (a correlation filter on the Subject/Label)
+  ```
+- **Boolean filter** — `TrueFilter` (receive everything — the default a subscription
+  gets if you don't specify one) or `FalseFilter` (receive nothing).
+
+Key point: filters evaluate **properties, not the body** — which is exactly why you
+lift routing-relevant data up into properties. Example fan-out: publish "order
+placed" to a topic once, and a `large-orders` subscription filters
+`amount > 1000` while an `all-orders` subscription takes everything — same message,
+different subscriptions matching on the `amount` property.
+
+### Correlation in Service Bus
+
+"Correlation" = tying related messages together. Two levels:
+- **`CorrelationId` (system property)** — the canonical field for it. In a
+  **request/reply** pattern, a sender sets `ReplyTo` (the queue it wants the answer
+  on) and a `CorrelationId`; the responder copies that same `CorrelationId` onto its
+  reply, so the original sender can match the reply to the request it sent (it may
+  have many in flight). Correlation **filters** on a subscription then route by that
+  id/subject.
+- **Correlation vs. the body** — put correlation data in the **`CorrelationId`
+  property**, not buried in the body. The broker (and subscription filters) can act
+  on a property without deserializing your payload; data only in the body is
+  invisible to routing and to anyone inspecting the message envelope. Same principle
+  as `region`/`amount` above — anything the *infrastructure* needs to act on belongs
+  in properties; the body is for the *application's* payload.
+- **End-to-end tracing** — this is a different but related "correlation": tools like
+  Application Insights stamp their own operation/trace id to follow a message across
+  services (see `docs/APPLICATION_INSIGHTS.md`). Service Bus's `CorrelationId` is
+  application-level message correlation; the tracing id is diagnostic correlation —
+  don't conflate the two in an interview.
+
 ## Completing vs. abandoning vs. dead-lettering — the part everyone forgets
 
 - The trigger method **returns normally** → the message is marked complete and removed from the queue. Done, forever.
@@ -384,6 +475,15 @@ An HTTP load balancer distributes *inbound requests* across instances that must 
 
 **Q: Does competing consumers preserve message order?**
 No — with plain competing consumers, multiple workers pull in parallel, so ordering isn't guaranteed. If you need ordering, use sessions: a session id pins all of one group's messages to a single consumer so they're processed in order, while different sessions still load-balance across consumers. It's a deliberate trade-off between maximum throughput and per-group ordering.
+
+**Q: What are application properties on a message, and why not just put everything in the body?**
+Application properties are a free-form key/value metadata dictionary that travels with the message alongside (not inside) the body. You use them for anything the *infrastructure* needs to act on — subscription filters evaluate properties (system + application), not the body, so lifting routing-relevant facts (region, priority, amount) into properties lets the broker route without ever deserializing your payload. The body stays for the application's actual data.
+
+**Q: What kinds of subscription filters are there and which is most efficient?**
+SQL filters (a SQL-92-like boolean expression over the message's properties, most flexible, can also mutate properties via a rule action), correlation filters (equality matches on system properties like CorrelationId/Subject and/or app properties — more efficient than SQL, use when simple equality suffices), and boolean filters (TrueFilter = everything, the default; FalseFilter = nothing). All evaluate properties, never the body.
+
+**Q: How does correlation work in Service Bus?**
+Via the `CorrelationId` system property. In request/reply, the sender sets `ReplyTo` (where it wants the answer) and a `CorrelationId`; the responder echoes that `CorrelationId` on the reply so the sender can match the reply to the originating request among many in flight. Correlation filters on subscriptions can also route by `CorrelationId`/`Subject`. Keep correlation data in the property, not the body, so filters and the broker can act on it without parsing the payload — and don't confuse it with Application Insights' diagnostic trace correlation, which is a separate, tracing-level id.
 
 **Q: What is duplicate detection and what does it key on?**
 It makes Service Bus discard a message whose `MessageId` it has already seen within a configured time window, so a publisher that retries a send (e.g. after a network blip) doesn't cause the consumer to process the same message twice. You enable it at queue/topic creation (`RequiresDuplicateDetection`, can't be changed later) and set the history window (default 10 min). The gotcha: it keys on `MessageId`, so you must assign a deterministic, business-meaningful id (like the order id) — random per-send ids (e.g. `Guid.NewGuid()`) never dedupe.

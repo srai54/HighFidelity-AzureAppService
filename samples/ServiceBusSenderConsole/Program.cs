@@ -39,14 +39,27 @@ ServiceBusSender sender = client.CreateSender(queueName);
 string body = $"Hello from the console sender at {DateTime.UtcNow:O}";
 ServiceBusMessage message = new ServiceBusMessage(body)
 {
+    // --- Some built-in (system) properties ---
     ContentType = "text/plain",
-    MessageId = Guid.NewGuid().ToString()
+    MessageId = Guid.NewGuid().ToString(),
+    Subject = "OrderCreated",                    // a.k.a. "Label" — a short message type/category
+    CorrelationId = Guid.NewGuid().ToString()    // used to correlate related messages (see the docs)
 };
+
+// --- Custom (application) properties ---
+// A free-form key/value bag that travels with the message as metadata (NOT in
+// the body). Subscription filters can route on these without reading the body.
+message.ApplicationProperties["region"] = "US";
+message.ApplicationProperties["priority"] = "high";
+message.ApplicationProperties["amount"] = 42.50;
 
 await sender.SendMessageAsync(message);
 
 Console.WriteLine($"Sent 1 message to queue '{queueName}':");
-Console.WriteLine($"  {body}");
+Console.WriteLine($"  Body:       {body}");
+Console.WriteLine($"  Subject:    {message.Subject}");
+Console.WriteLine($"  Properties: region={message.ApplicationProperties["region"]}, " +
+                  $"priority={message.ApplicationProperties["priority"]}, amount={message.ApplicationProperties["amount"]}");
 
 // (Optional) send a small batch — the efficient way to send many at once:
 // using ServiceBusMessageBatch batch = await sender.CreateMessageBatchAsync();

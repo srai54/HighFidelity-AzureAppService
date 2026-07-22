@@ -93,6 +93,27 @@ What each piece does:
 - **`SendMessageAsync`** — puts the message on the queue. Once it returns, the
   message is durably stored in Service Bus.
 
+### Adding properties to the message
+
+Beyond the body, a message carries **system properties** (`Subject`/Label,
+`CorrelationId`, `ContentType`, …) and a free-form **application properties**
+dictionary for your own metadata. The runnable sample sets both:
+```csharp
+var message = new ServiceBusMessage(body)
+{
+    ContentType   = "text/plain",
+    Subject       = "OrderCreated",              // short message "type"/category
+    CorrelationId = Guid.NewGuid().ToString()    // correlate related messages
+};
+message.ApplicationProperties["region"]   = "US";
+message.ApplicationProperties["priority"] = "high";
+message.ApplicationProperties["amount"]   = 42.50;
+```
+Why properties (not just the body): **topic subscription filters route on
+properties, not the body** — so routing-relevant facts belong here. Full treatment
+(system vs application properties, SQL/correlation filters, correlation) is in the
+"Message anatomy" section of `docs/SERVICE_BUS.md`.
+
 > **Security:** don't paste a real connection string into the file and commit it.
 > The sample reads it from the `SERVICE_BUS_CONNECTION_STRING` environment variable.
 > Set it before running:
