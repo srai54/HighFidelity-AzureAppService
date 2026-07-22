@@ -38,9 +38,138 @@ Unhandled exception. System.InvalidOperationException: A connection string was n
 ```
 The fix is the `if (!string.IsNullOrWhiteSpace(...))` guard shown above — only register it when a real connection string exists. This is worth remembering precisely because it contradicts the reasonable-sounding assumption that "adding an SDK for something optional will just be a no-op if unconfigured."
 
+## What "fully integrated" looks like (sample code)
+
+The repo keeps the **minimal** wiring on purpose (one guarded line) — that alone already gives you automatic requests, dependencies, exceptions, and `ILogger` traces with zero extra code. But interviewers often ask "and how would you add *custom* telemetry?" This section is the **fuller reference picture**: what the same app looks like when you go beyond the automatic collection. (These snippets are illustrative — they're not all wired into the repo's actual `Program.cs`, which stays minimal.)
+
+### 1. `Program.cs` — registration with sampling + a telemetry initializer
+
+```csharp
+// Same guard as the repo — only register when a connection string exists.
+var appInsightsConnectionString = builder.Configuration["ApplicationInsights:ConnectionString"];
+if (!string.IsNullOrWhiteSpace(appInsightsConnectionString))
+{
+    builder.Services.AddApplicationInsightsTelemetry(options =>
+    {
+        options.ConnectionString = appInsightsConnectionString;
+        options.EnableAdaptiveSampling = true;   // keep cost down at high volume (see the sampling Q&A)
+    });
+
+    // A telemetry INITIALIZER stamps every outgoing telemetry item with extra
+    // context. Setting the "cloud role name" is the most useful one: it's what
+    // labels this service as a distinct node in the Application Map, so a
+    // multi-service system (WebApp + Functions) shows up as separate boxes
+    // instead of one blur.
+    builder.Services.AddSingleton<ITelemetryInitializer, CloudRoleNameInitializer>();
+}
+```
+
+```csharp
+// A minimal telemetry initializer.
+using Microsoft.ApplicationInsights.Channel;
+using Microsoft.ApplicationInsights.Extensibility;
+
+public sealed class CloudRoleNameInitializer : ITelemetryInitializer
+{
+    public void Initialize(ITelemetry telemetry)
+    {
+        telemetry.Context.Cloud.RoleName = "HighFidelity.WebApp";
+    }
+}
+```
+
+### 2. A service/controller emitting CUSTOM telemetry via `TelemetryClient`
+
+`TelemetryClient` is registered for you by `AddApplicationInsightsTelemetry()` — just inject it. This is how you record things the automatic collection can't know are meaningful:
+
+```csharp
+using Microsoft.ApplicationInsights;
+using Microsoft.ApplicationInsights.DataContracts;
+
+public class CheckoutService
+{
+    private readonly TelemetryClient _telemetry;
+    private readonly ILogger<CheckoutService> _logger;
+
+    public CheckoutService(TelemetryClient telemetry, ILogger<CheckoutService> logger)
+    {
+        _telemetry = telemetry;
+        _logger = logger;
+    }
+
+    public async Task<bool> CheckoutAsync(string orderId, decimal amount)
+    {
+        // Custom EVENT — a business action worth counting/segmenting later.
+        _telemetry.TrackEvent("CheckoutStarted",
+            properties: new Dictionary<string, string> { ["orderId"] = orderId },
+            metrics: new Dictionary<string, double> { ["amount"] = (double)amount });
+
+        // Custom METRIC — prefer GetMetric(...) over TrackMetric(...) for
+        // high-frequency values; it pre-aggregates locally instead of shipping
+        // one item per call.
+        _telemetry.GetMetric("checkout.amount").TrackValue((double)amount);
+
+        try
+        {
+            // Manually tracking a DEPENDENCY — only needed for a call the SDK
+            // doesn't auto-collect (a custom protocol, an SDK it can't hook).
+            // Plain HttpClient/SQL calls are captured automatically without this.
+            using var op = _telemetry.StartOperation<DependencyTelemetry>("PaymentGateway.Charge");
+            op.Telemetry.Type = "HTTP";
+            op.Telemetry.Target = "api.payments.example";
+
+            var ok = await CallPaymentGatewayAsync(orderId, amount);
+            op.Telemetry.Success = ok;
+
+            // ILogger traces flow to App Insights too, correlated to this same
+            // operation — no TelemetryClient call needed for ordinary logging.
+            _logger.LogInformation("Checkout for {OrderId} completed: {Result}", orderId, ok);
+            return ok;
+        }
+        catch (Exception ex)
+        {
+            // Explicitly track a HANDLED exception (unhandled ones are captured
+            // automatically). Correlated to the current request/operation.
+            _telemetry.TrackException(ex,
+                new Dictionary<string, string> { ["orderId"] = orderId });
+            throw;
+        }
+    }
+
+    private Task<bool> CallPaymentGatewayAsync(string orderId, decimal amount) => Task.FromResult(true);
+}
+```
+
+### 3. Config — same key the repo already uses
+
+```jsonc
+// appsettings.json (or, in Azure, the APPLICATIONINSIGHTS_CONNECTION_STRING
+// app setting that App Service sets automatically when you link the resource).
+{
+  "ApplicationInsights": {
+    "ConnectionString": "InstrumentationKey=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx;IngestionEndpoint=https://<region>.in.applicationinsights.azure.com/"
+  }
+}
+```
+
+### What you get for free vs. what needs code
+
+| Telemetry | Automatic (just `AddApplicationInsightsTelemetry`) | Needs your code |
+|---|---|---|
+| Inbound requests | ✅ | — |
+| Outbound HTTP / SQL dependencies | ✅ | — |
+| Unhandled exceptions | ✅ | — |
+| `ILogger` traces | ✅ (flow automatically) | — |
+| Custom business events | — | `TrackEvent` |
+| Custom metrics | — | `GetMetric().TrackValue` |
+| Handled exceptions | — | `TrackException` |
+| Non-standard dependencies | — | `StartOperation<DependencyTelemetry>` |
+
+The takeaway: the **one line gives you the whole flight recorder**; `TelemetryClient` is only for the business-specific signals the SDK can't infer on its own.
+
 ## What's real vs. reference-only in this repo
 
-The conditional wiring itself is verified — the app starts cleanly with no connection string configured (the whole point of the fix above), proving the guard works. Actually seeing telemetry show up in the Azure Portal requires a real Application Insights resource, which wasn't available in this environment.
+The conditional wiring itself is verified — the app starts cleanly with no connection string configured (the whole point of the fix above), proving the guard works. Actually seeing telemetry show up in the Azure Portal requires a real Application Insights resource, which wasn't available in this environment. **The "fully integrated" snippets above are illustrative reference** — the repo deliberately keeps only the minimal guarded registration; the `TelemetryClient`/initializer/sampling code is shown to answer "what would the full integration look like," not committed as active code.
 
 ---
 
@@ -60,6 +189,12 @@ Because it doesn't — `AddApplicationInsightsTelemetry()` throws at startup wit
 
 **Q: How does App Service know which Application Insights resource to send telemetry to?**
 When you link an Application Insights resource to an App Service in the Azure Portal (or via Bicep/ARM), Azure automatically sets the `APPLICATIONINSIGHTS_CONNECTION_STRING` application setting (an environment variable) on the App Service. The app never hardcodes which resource it talks to — that binding lives in Azure resource configuration, not in the code or in `appsettings.json`.
+
+**Q: How do you add custom telemetry beyond what's collected automatically?**
+Inject `TelemetryClient` (registered automatically by `AddApplicationInsightsTelemetry()`) and call `TrackEvent` for business events, `GetMetric().TrackValue` for high-frequency metrics (it pre-aggregates locally, cheaper than `TrackMetric` per call), `TrackException` for *handled* exceptions (unhandled ones are automatic), and `StartOperation<DependencyTelemetry>` for dependencies the SDK can't auto-detect. Ordinary `ILogger` logging already flows to App Insights correlated to the current request, so you don't need `TelemetryClient` just for logging. See the "fully integrated" sample above.
+
+**Q: What's a telemetry initializer and why set the cloud role name?**
+An `ITelemetryInitializer` runs on every telemetry item before it's sent, letting you stamp shared context onto all of it. Setting `Context.Cloud.RoleName` is the common case: it's what makes each service appear as a distinct node in the Application Map, so a WebApp + Function App system shows as separate, connected boxes rather than being collapsed into one — essential for reading end-to-end transactions across services.
 
 **Q: Classic Application Insights SDK vs. OpenTelemetry — which would you pick today?**
 OpenTelemetry, for anything new. Microsoft has explicitly put the classic Application Insights SDK into maintenance mode and is standardizing on OpenTelemetry (a vendor-neutral instrumentation standard) with `Azure.Monitor.OpenTelemetry.Exporter` as the piece that ships that data specifically to Azure Monitor/Application Insights. The Functions project in this repo already uses that path; it's the direction the WebApp project would move too if this weren't a demo.
