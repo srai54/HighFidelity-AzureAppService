@@ -260,7 +260,9 @@ are three filter kinds:
   gets if you don't specify one) or `FalseFilter` (receive nothing).
 
 Key point: filters evaluate **properties, not the body** — which is exactly why you
-lift routing-relevant data up into properties. Example fan-out: publish "order
+lift routing-relevant data up into properties. (For the full interview-depth
+treatment — rules, the `$Default` rule, rule actions, the multi-rule duplicate
+gotcha, and creating filters via portal/CLI/SDK — see `docs/SERVICE_BUS_FILTERS.md`.) Example fan-out: publish "order
 placed" to a topic once, and a `large-orders` subscription filters
 `amount > 1000` while an `all-orders` subscription takes everything — same message,
 different subscriptions matching on the `amount` property.
