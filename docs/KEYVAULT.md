@@ -10,6 +10,78 @@ The "inject using IOptions" part is a separate, older idea that Key Vault plugs 
 
 Think of `IConfiguration` as a big shared dictionary that many different sources are allowed to add entries to — `appsettings.json` adds some, environment variables add some, and (if you turn it on) Key Vault adds some too, layered on top like sticky notes on a whiteboard, last one stuck wins. Your C# class (`PaymentGatewayOptions`) doesn't care which sticky note a value came from. It just says "give me everything under the `PaymentGateway` heading" and gets handed a fully-filled-in object.
 
+## What you need to install (NuGet packages)
+
+Wiring Key Vault into config needs **two** packages, and it's worth being clear on why it's two and not one — this is a common point of confusion:
+
+```xml
+<!-- The configuration provider: adds "read secrets from a Vault into
+     IConfiguration" — i.e. the builder.Configuration.AddAzureKeyVault(...)
+     extension method itself lives here. -->
+<PackageReference Include="Azure.Extensions.AspNetCore.Configuration.Secrets" Version="1.5.1" />
+
+<!-- The credential/auth library: provides DefaultAzureCredential (and the
+     whole credential chain — Managed Identity, az login, Visual Studio, etc.).
+     AddAzureKeyVault needs a credential passed to it, and this is where that
+     type comes from. -->
+<PackageReference Include="Azure.Identity" Version="1.21.0" />
+```
+
+Install them from the CLI (run in `src/WebApp`):
+```powershell
+dotnet add package Azure.Extensions.AspNetCore.Configuration.Secrets
+dotnet add package Azure.Identity
+```
+
+**Why two packages?** They do genuinely separate jobs, and the split mirrors the "Key Vault decides *where* the value comes from; how you authenticate is a separate concern" idea:
+- `Azure.Extensions.AspNetCore.Configuration.Secrets` = the **configuration provider** — it's what teaches `IConfiguration` to pull secrets from a Vault and merge them in (the `AddAzureKeyVault` extension method). Without it, that method doesn't exist.
+- `Azure.Identity` = the **credential** — it supplies `DefaultAzureCredential`, the *identity* the provider uses to prove it's allowed to read the Vault. Without it, you'd have the ability to read a Vault but no way to authenticate to one.
+
+A third package, `Azure.Security.KeyVault.Secrets` (v4.11.0), is also referenced in this repo — that's the lower-level SDK for talking to Key Vault *directly* (e.g. `new SecretClient(...).GetSecretAsync(...)` in code, outside the config system). You don't need it just for the `IConfiguration` integration, but it's handy if you ever want to read/write a secret imperatively rather than through config binding. The `using Azure.Identity;` at the top of `Program.cs` is what makes `DefaultAzureCredential` resolve.
+
+## Sample `appsettings.json` (with Azure Key Vault integrated)
+
+The trick to remember: **the app never puts secrets in `appsettings.json`.** The only Key-Vault-related thing that goes in config is the *pointer* to the Vault (`KeyVault:Uri`) — a non-secret URL. The actual secrets (`ApiKey`, `ApiSecret`) get *layered in at runtime* by the Key Vault provider, so config files only ever hold the non-secret `BaseUrl`.
+
+**`appsettings.json`** — committed to git, only non-secrets, plus the Vault pointer:
+```jsonc
+{
+  "Logging": {
+    "LogLevel": { "Default": "Information", "Microsoft.AspNetCore": "Warning" }
+  },
+  "AllowedHosts": "*",
+
+  // The pointer to the Vault. This is NOT a secret — it's just a URL — so it's
+  // safe to commit. When set, Program.cs calls AddAzureKeyVault against it;
+  // when empty/absent, the whole Key Vault block is skipped and secrets come
+  // from appsettings.Development.json / User Secrets instead.
+  "KeyVault": {
+    "Uri": "https://kv-highfid-12345.vault.azure.net/"
+  },
+
+  "PaymentGateway": {
+    // Non-secret: safe here. ApiKey/ApiSecret are deliberately ABSENT — they
+    // arrive from Key Vault at runtime (secret names "PaymentGateway--ApiKey"
+    // and "PaymentGateway--ApiSecret", the "--" mapping to ":").
+    "BaseUrl": "https://api.example-payments.test"
+  }
+}
+```
+
+**`appsettings.Development.json`** — for local dev, where there's no Vault; the *fake* secrets live here (and this file is typically git-ignored or holds only throwaway values). `KeyVault:Uri` is intentionally omitted so the Vault call is skipped entirely locally:
+```jsonc
+{
+  "PaymentGateway": {
+    "ApiKey": "local-dev-fake-key-not-a-real-secret",
+    "ApiSecret": "local-dev-fake-secret-not-a-real-secret"
+  }
+}
+```
+
+**In Azure (App Service)**, you don't edit `appsettings.json` at all — you set `KeyVault__Uri` as an *application setting* (double-underscore = `:`), which overrides/supplies the config key without touching the committed file. See `scripts/03-app-service.azcli` for the exact command, and `scripts/01-keyvault.azcli` for creating the Vault and secrets those keys resolve to.
+
+The precedence, worth committing to memory: `appsettings.json` (base) → `appsettings.{Environment}.json` → environment variables / App Service settings → **Key Vault (added last in `Program.cs`, so it wins)**. Same `PaymentGateway:ApiKey` key in two places → the later source wins.
+
 ## How this repo implements it
 
 - **`src/WebApp/Configuration/PaymentGatewayOptions.cs`** — the plain class: `BaseUrl`, `ApiKey`, `ApiSecret`.
@@ -66,6 +138,12 @@ Whichever config source was added *last* wins, by ASP.NET Core configuration con
 
 **Q: Why DefaultAzureCredential instead of a client ID/secret?**
 No credential to store, rotate, or leak — it uses Managed Identity in Azure (an identity tied to the resource itself, with no password to steal) and falls back to your local developer login for local dev. A client secret is just another secret needing its own secret-management story, which defeats some of the point of using Key Vault in the first place.
+
+**Q: Which NuGet packages do you need to integrate Key Vault with IConfiguration, and why more than one?**
+Two: `Azure.Extensions.AspNetCore.Configuration.Secrets` (the configuration provider — it's what adds the `AddAzureKeyVault` method that pulls Vault secrets into `IConfiguration`) and `Azure.Identity` (supplies `DefaultAzureCredential` — the identity used to authenticate to the Vault). They're separate because reading secrets *into config* and *authenticating* to the Vault are separate concerns — the provider needs a credential handed to it, and that credential type lives in the identity package. (`Azure.Security.KeyVault.Secrets` is a third, optional one — only needed if you want to read/write secrets imperatively in code via `SecretClient`, not through the config system.)
+
+**Q: What actually goes in appsettings.json when you use Key Vault — do the secrets live there?**
+No — the secrets never touch `appsettings.json`. The only Key-Vault-related thing in config is the non-secret *pointer* to the Vault (`KeyVault:Uri`, just a URL). The secrets are layered into `IConfiguration` at runtime by the Key Vault provider, so committed config files only ever hold non-secret values like `BaseUrl`. Locally, fake secrets go in `appsettings.Development.json` (with `KeyVault:Uri` omitted so no real Vault call happens); in Azure, `KeyVault__Uri` is set as an App Service application setting rather than edited into the file.
 
 **Q: What would you change to make this production-grade?**
 Add `ReloadInterval` to `AddAzureKeyVault` so rotated secrets get picked up without a restart; scope the Managed Identity's Vault access to `get`/`list` only (not `set`/`delete`) via Key Vault's RBAC or access policies; and use `IOptionsMonitor` anywhere a secret might rotate while the app is running, so the app doesn't need restarting to pick up a rotated key.
