@@ -131,6 +131,9 @@ This is deliberately in the **separate Functions project**, not the WebApp — i
 
 Three ways, from "click in the portal" to "the app's own code":
 
+> For a full click-by-click portal walkthrough (create namespace → create queue →
+> send/receive → get the connection string), see `docs/SERVICE_BUS_PORTAL_GUIDE.md`.
+
 ### 1. Portal — Service Bus Explorer (no code, fastest to try)
 In the Azure Portal, open the namespace → the `orders` queue → **Service Bus
 Explorer** (left menu). From there you can:
