@@ -32,7 +32,8 @@ src/
 docs/
   ARCHITECTURE.md              → how the two projects fit together, what's real vs. reference-only, honestly
   KEYVAULT.md                  → theory + interview Q&A
-  APPLICATION_INSIGHTS.md      → theory + interview Q&A
+  APPLICATION_INSIGHTS.md      → theory + interview Q&A (+ fully-integrated sample code)
+  APP_INSIGHTS_FUNCTIONS_DEMO.md → deploy a Function App + App Insights, check Live Metrics/Performance
   FUNCTION_APPS.md             → theory + interview Q&A
   SERVICE_BUS.md               → theory + interview Q&A
   BLOB_STORAGE.md              → theory + interview Q&A
