@@ -22,9 +22,8 @@ very common interview opener):
 - **Namespace** — the top-level container and the network endpoint (e.g.
   `sb-highfid-1234.servicebus.windows.net`). It's like a "server" for messaging:
   the connection string points at a namespace, and queues/topics live *inside*
-  it. You pick a pricing tier at the namespace level (Basic / Standard / Premium),
-  and that tier decides what's available inside — notably, **topics need Standard
-  or Premium; Basic only allows plain queues.**
+  it. You pick a pricing tier at the namespace level, and that tier decides
+  what's available inside (see the three tiers below).
 - **Queue** — a single line of messages with **one logical consumer side**:
   one message goes to one consumer (spread across competing-consumer instances,
   as above). This is **point-to-point**: producer → queue → (a) consumer. This
@@ -37,11 +36,30 @@ very common interview opener):
   topic (subject to its filter, if any), and each is consumed independently — with
   its own competing consumers, its own dead-letter queue, etc.
 
-**Queue vs. Topic+Subscription — the one-line distinction:** a *queue* delivers
-each message to exactly one consumer (point-to-point, work distribution); a
-*topic* delivers each message to every subscription (publish/subscribe, fan-out).
+**Queue vs. Topic+Subscription — the one-line distinction:** a *queue* is
+**point-to-point** — one sending side and one logical receiving side, each message
+handled by a single consumer (work distribution). A *topic* is **one-to-many** —
+you attach a **separate subscription per interested receiver**, and every
+subscription gets its own copy of each message, consumed by its own receiver
+(publish/subscribe, fan-out). Put simply: on a queue a message is consumed once;
+on a topic the same message is delivered to every subscription, so N subscriptions
+= N independent receivers each getting their own copy.
 Use a queue when one logical worker should handle each message; use a topic when
 several *different* services each independently need to react to the same event.
+
+### The three pricing tiers (set at the namespace level)
+
+| Tier | Queues | Topics/Subscriptions | Notable | Typical use |
+|---|---|---|---|---|
+| **Basic** | ✅ | ❌ (queues only) | Cheapest; no topics, no sessions, small message size | Simple "just a queue" background work |
+| **Standard** | ✅ | ✅ | Topics, sessions, transactions, dead-lettering; pay-per-operation | Most apps — the common default |
+| **Premium** | ✅ | ✅ | Dedicated capacity (predictable throughput/latency), larger messages, VNet/private-endpoint isolation, geo-DR | Production at scale, isolation/compliance needs |
+
+The single fact worth memorizing: **topics require Standard or Premium — Basic
+only allows plain queues.** So if an interview scenario needs fan-out (topics),
+Basic is immediately ruled out. This repo's `scripts/05-service-bus.azcli`
+creates a **Basic** namespace because it only uses one queue; add a topic and
+you'd bump it to Standard.
 
 Concrete example: if "order placed" should be handled once (process the order),
 that's a **queue**. If "order placed" should simultaneously (a) trigger
@@ -108,6 +126,64 @@ This is deliberately in the **separate Functions project**, not the WebApp — i
 - The trigger method **returns normally** → the message is marked complete and removed from the queue. Done, forever.
 - The trigger method **throws** → the message becomes available again after a lock-duration timeout, and Service Bus redelivers it — up to `MaxDeliveryCount` times (10 by default).
 - After `MaxDeliveryCount` failed deliveries, the message moves to the **dead-letter subqueue** instead of being retried forever or silently dropped — a separate place you can inspect "messages that consistently failed to process," which is the difference between a transient blip and a message that's fundamentally broken (bad data, a bug that always throws on this input).
+
+## Sending and receiving messages from a queue in Azure
+
+Three ways, from "click in the portal" to "the app's own code":
+
+### 1. Portal — Service Bus Explorer (no code, fastest to try)
+In the Azure Portal, open the namespace → the `orders` queue → **Service Bus
+Explorer** (left menu). From there you can:
+- **Send**: click *Send messages*, type a body (e.g. the `OrderCreatedMessage`
+  JSON), and send — useful for triggering the receiver without running the WebApp.
+- **Receive/Peek**: *Peek* looks at messages without removing them; *Receive*
+  pulls them (in ReceiveAndDelete or PeekLock mode). This is also where you inspect
+  the **dead-letter** subqueue to see messages that failed processing.
+
+### 2. az CLI (create the queue; keys for a connection string)
+Message send/receive itself is done via the SDK or the portal, but the CLI is how
+you create the queue and get the connection string the senders/receivers need
+(full script: `scripts/05-service-bus.azcli`):
+```bash
+az servicebus queue create --name orders --namespace-name "$SB_NAMESPACE" --resource-group "$RG"
+az servicebus namespace authorization-rule keys list \
+  --resource-group "$RG" --namespace-name "$SB_NAMESPACE" \
+  --name RootManageSharedAccessKey --query primaryConnectionString -o tsv
+```
+
+### 3. In code — the SDK (what this repo does)
+This is the real send/receive, using `Azure.Messaging.ServiceBus`.
+
+**Send** (`ServiceBusPublisher.cs`) — a `ServiceBusSender` obtained from the
+singleton `ServiceBusClient`:
+```csharp
+ServiceBusSender sender = _client.CreateSender("orders");         // cached per queue
+var message = new ServiceBusMessage(JsonSerializer.Serialize(order));
+await sender.SendMessageAsync(message);                            // message now durably on the queue
+```
+
+**Receive** — two styles:
+- *This repo's style* — let the **Functions `[ServiceBusTrigger]`** receive for you
+  (`OrderCreatedFunction.cs`); the runtime pulls messages, hands them to your
+  method, and auto-completes on success / retries on throw. No manual receive loop.
+- *Manual style* (a console app or WebApp, for reference) — a `ServiceBusProcessor`:
+  ```csharp
+  ServiceBusProcessor processor = _client.CreateProcessor("orders", new ServiceBusProcessorOptions());
+  processor.ProcessMessageAsync += async args =>
+  {
+      string body = args.Message.Body.ToString();
+      // ... handle it ...
+      await args.CompleteMessageAsync(args.Message);   // remove from queue on success
+  };
+  processor.ProcessErrorAsync += args => { /* log */ return Task.CompletedTask; };
+  await processor.StartProcessingAsync();
+  ```
+  `CompleteMessageAsync` = done (removed). Not completing (throw/timeout) = redelivered,
+  then dead-lettered after `MaxDeliveryCount` — see the next section.
+
+The message flow end-to-end in this repo: `POST /api/orders` → `ServiceBusPublisher`
+sends to the `orders` queue → the queue holds it → `OrderCreatedFunction` receives
+and processes it. Producer and consumer never talk directly — only through the queue.
 
 ## What's real vs. reference-only in this repo
 
