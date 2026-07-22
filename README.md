@@ -37,6 +37,7 @@ docs/
   FUNCTION_APPS.md             → theory + interview Q&A
   SERVICE_BUS.md               → theory + interview Q&A
   SERVICE_BUS_PORTAL_GUIDE.md  → portal click-through: create namespace/queue, send/receive, connection strings
+  SEND_TO_SERVICE_BUS_FROM_VISUAL_STUDIO.md → run the WebApp in VS and publish a message via Swagger
   BLOB_STORAGE.md              → theory + interview Q&A
   RESILIENCE_POLLY.md          → theory + interview Q&A
   DURABLE_FUNCTIONS.md         → theory + interview Q&A
