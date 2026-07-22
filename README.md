@@ -39,6 +39,7 @@ docs/
   SERVICE_BUS_PORTAL_GUIDE.md  → portal click-through: create namespace/queue, send/receive, connection strings
   SEND_TO_SERVICE_BUS_FROM_VISUAL_STUDIO.md → run the WebApp in VS and publish a message via Swagger
   SERVICE_BUS_SENDER_CONSOLE.md → minimal console sender from scratch (NuGet → client → sender → send)
+  SERVICE_BUS_RECEIVER_CONSOLE.md → minimal console receiver (client → receiver → receive/complete)
   BLOB_STORAGE.md              → theory + interview Q&A
   RESILIENCE_POLLY.md          → theory + interview Q&A
   DURABLE_FUNCTIONS.md         → theory + interview Q&A

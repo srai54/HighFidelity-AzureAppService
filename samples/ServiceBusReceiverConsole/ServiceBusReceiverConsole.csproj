@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>ServiceBusReceiverConsole</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Same single package as the sender — it covers both send and receive. -->
+    <PackageReference Include="Azure.Messaging.ServiceBus" Version="7.20.2" />
+  </ItemGroup>
+
+</Project>

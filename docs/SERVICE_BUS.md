@@ -197,6 +197,14 @@ console app or a `BackgroundService` in the WebApp).
 - The trigger method **throws** → the message becomes available again after a lock-duration timeout, and Service Bus redelivers it — up to `MaxDeliveryCount` times (10 by default).
 - After `MaxDeliveryCount` failed deliveries, the message moves to the **dead-letter subqueue** instead of being retried forever or silently dropped — a separate place you can inspect "messages that consistently failed to process," which is the difference between a transient blip and a message that's fundamentally broken (bad data, a bug that always throws on this input).
 
+When you receive manually (`ServiceBusReceiver`, not a trigger), you settle each message explicitly with one of **four** outcomes:
+- **Complete** (`CompleteMessageAsync`) — success; remove it from the queue.
+- **Abandon** (`AbandonMessageAsync`) — release the lock so it's redelivered (a retry); increments the delivery count, and after `MaxDeliveryCount` it auto-dead-letters. Abandon means "retry," not "discard."
+- **Defer** (`DeferMessageAsync`) — set it aside without removing it; it leaves the normal delivery flow and can only be retrieved later **by its sequence number** (`ReceiveDeferredMessageAsync`). Used for out-of-order or not-yet-ready messages you don't want to lose.
+- **Dead-letter** (`DeadLetterMessageAsync`) — move it to the dead-letter subqueue immediately, skipping retries, for messages you know are unprocessable. (Messages also arrive here automatically on max-delivery-count or TTL expiry.)
+
+The dead-letter queue (DLQ) itself is a real subqueue you can receive from — you open a receiver on the queue's `$DeadLetterQueue` path to inspect/replay parked messages. See `docs/SERVICE_BUS_RECEIVER_CONSOLE.md` for the settle-options table with code.
+
 ## Sending and receiving messages from a queue in Azure
 
 Three ways, from "click in the portal" to "the app's own code":
