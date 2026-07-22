@@ -136,6 +136,79 @@ up after a few minutes: confirm `APPLICATIONINSIGHTS_CONNECTION_STRING` is actua
 set on the Function App (`az functionapp config appsettings list ...`), and that you
 called the functions *after* the setting was applied + the app restarted.
 
+## Exceptions and errors in App Insights
+
+Two more functions in `AppInsightsDemoFunctions.cs` demonstrate how failures
+surface — because "does it capture exceptions" is the single most common
+follow-up after "does it capture requests":
+
+```csharp
+[Function("Function3Unhandled")]   // GET /api/function-3-unhandled
+// throws InvalidOperationException and does NOT catch it
+
+[Function("Function4Handled")]     // GET /api/function-4-handled
+// catches its own exception, reports it via _logger.LogError(ex, ...),
+// and returns a controlled 500
+```
+
+### The two kinds, and how each looks in the portal
+
+| | Function3 (unhandled) | Function4 (handled) |
+|---|---|---|
+| What happens | Exception escapes the function | Exception caught inside a `try/catch` |
+| Caller sees | 500 (uncontrolled) | 500 (controlled JSON error body) |
+| Captured by | **Automatic** — the runtime records it | `_logger.LogError(ex, ...)` you wrote |
+| App Insights telemetry | A **failed request** + an **exception** item (stack trace) | An **exception/error trace** attached to the (successful-or-500) request |
+| Correlation | Both correlated to the request's operation id | Correlated to the request's operation id |
+
+The key theory point: **an unhandled exception is captured for free** — you write
+no telemetry code, the exception escaping the invocation is enough. A **handled**
+exception is invisible to App Insights *unless you report it* — because you
+swallowed it, the platform never sees it, so `_logger.LogError(ex, ...)` (or, in
+the classic-SDK WebApp, `TelemetryClient.TrackException(ex)`) is what puts it in
+front of you. This is the trade-off to state in an interview: catching an
+exception to keep the app running also *hides* it from monitoring unless you
+explicitly log it.
+
+### Where to see them in the Azure Portal
+
+Open the App Insights resource → **Failures** (left menu):
+- The **Operations** tab shows failed *requests* — `function-3-unhandled` will
+  appear here with a failed-request count and its 500s.
+- The **Exceptions** tab shows exception *types* — `InvalidOperationException`
+  (from Function3) and `TimeoutException` (from Function4), each with a count and
+  drill-in to the full stack trace and the request that threw it.
+- Click any exception → the **end-to-end transaction** view shows the request, the
+  exception, and the `Function3 invoked...` / `Function4 caught...` trace lines all
+  under one operation id — the whole story of that one failed call.
+
+### Querying failures directly (Logs / KQL)
+
+Under **Logs**, the `exceptions` and `requests` tables are queryable with KQL:
+```kusto
+// every exception in the last hour, newest first
+exceptions
+| where timestamp > ago(1h)
+| project timestamp, type, outerMessage, operation_Name
+| order by timestamp desc
+
+// failed requests, and how many there were
+requests
+| where timestamp > ago(1h) and success == false
+| summarize failures = count() by name, resultCode
+```
+`operation_Name` / `operation_Id` are the join keys that tie an exception back to
+its request — the same correlation idea from `docs/APPLICATION_INSIGHTS.md`.
+
+### Generating the failures to look at
+
+```bash
+curl -i https://func-highfid-$SUFFIX.azurewebsites.net/api/function-3-unhandled   # -> 500, unhandled
+curl -i https://func-highfid-$SUFFIX.azurewebsites.net/api/function-4-handled      # -> 500, handled+logged
+```
+Then watch them appear in **Failures** (1–3 min lag), or in **Live Metrics** where
+the failure rate ticks up immediately.
+
 ## What's real vs. reference-only in this repo
 
 The two functions **compile and build cleanly** (0 warnings), and the App Insights
@@ -162,6 +235,12 @@ Live Metrics — it's a near-real-time stream (sub-second), so you call the func
 
 **Q: You deployed and called the function but see nothing in Performance — what do you check?**
 First, that `APPLICATIONINSIGHTS_CONNECTION_STRING` is actually set on the Function App and points at the right resource. Second, that you called the function *after* the setting was applied and the app restarted. Third, whether you're just inside the ingestion lag (check Live Metrics, which is immediate, to rule that out). Fourth, that you're looking at the App Insights resource, not the Function App blade.
+
+**Q: Are exceptions captured automatically, or do you have to write code?**
+Unhandled exceptions — the ones that escape your function/controller — are captured automatically: the runtime records both a failed request and an exception telemetry item with the stack trace, no code required. Handled exceptions (ones you catch) are NOT captured automatically, because you swallowed them before the platform could see them — you have to report them yourself via `_logger.LogError(ex, ...)` or `TelemetryClient.TrackException(ex)`. The catch to name in interviews: catching to keep the app alive also hides the failure from monitoring unless you explicitly log it.
+
+**Q: Where do you look in the portal for errors, and how do you tie an exception to the request that caused it?**
+The Failures blade — its Operations tab lists failed requests, its Exceptions tab lists exception types with counts and stack traces. Clicking through gives the end-to-end transaction view, which shows the request, the exception, and the correlated log traces under one operation id. In Logs/KQL, the `exceptions` and `requests` tables share `operation_Id`/`operation_Name`, which is how you join an exception back to its request.
 
 **Q: Isolated worker vs. in-process model — does App Insights integration differ?**
 Yes. In-process functions share the host process, so the classic App Insights SDK integrates directly. Isolated-worker functions (this repo, .NET 8) run in a separate process, so worker telemetry is forwarded either via OpenTelemetry + Azure Monitor exporter (used here, the recommended path) or the `Microsoft.Azure.Functions.Worker.ApplicationInsights` package. The host-level request telemetry works the same either way — it's the worker's own telemetry pipe that differs.
