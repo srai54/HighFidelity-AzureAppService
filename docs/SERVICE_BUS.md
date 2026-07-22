@@ -121,6 +121,76 @@ public void Run([ServiceBusTrigger("orders", Connection = "ServiceBusConnection"
 ```
 This is deliberately in the **separate Functions project**, not the WebApp — in a real system these are two independently deployable Azure resources (an App Service and a Function App), and the whole point of the queue is that neither needs to know the other is up. Notice `OrderCreatedMessage` is **redefined** in the Functions project rather than shared via a project reference — see the note in that file. The wire contract (the JSON shape) is the actual contract; sharing a C# type across a deployment boundary would recouple two things a queue exists specifically to decouple.
 
+## The SDK types — Client, Sender, Receiver, Processor
+
+Four types in `Azure.Messaging.ServiceBus` do all the work. Knowing what each is
+for (and its lifetime) is a very common interview drill:
+
+| Type | Role | Lifetime | Direction |
+|---|---|---|---|
+| **`ServiceBusClient`** | The connection factory — owns the actual AMQP connection + auth to the namespace. You create senders/receivers/processors *from* it. | **Singleton** (expensive; one per app) | — |
+| **`ServiceBusSender`** | Sends messages to one queue/topic. | Cheap; cache one per destination | Send |
+| **`ServiceBusReceiver`** | Pulls messages **manually** — you call `ReceiveMessagesAsync` in your own loop and complete/abandon them yourself. | Cheap; per consumer | Receive (pull) |
+| **`ServiceBusProcessor`** | **Event-driven** receiver — you hand it message + error handlers and call `StartProcessingAsync`; it runs its own loop, manages concurrency, and auto-renews locks. | Cheap; long-lived while processing | Receive (push-style) |
+
+### `ServiceBusClient` — the one you make a singleton
+It holds the real network connection and is expensive to construct, so you create
+**exactly one** for the app's lifetime and register it as a singleton. Everything
+else is created from it. This repo registers it in `Program.cs`:
+```csharp
+builder.Services.AddSingleton(new ServiceBusClient(serviceBusConnectionString));
+```
+
+### `ServiceBusSender` — send
+Obtained via `client.CreateSender("orders")`. Lightweight, so you cache one per
+queue rather than creating one per publish. This repo (`ServiceBusPublisher.cs`)
+caches senders in a `ConcurrentDictionary`:
+```csharp
+var sender = _senders.GetOrAdd(queueName, _client.CreateSender);
+await sender.SendMessageAsync(new ServiceBusMessage(body) { ContentType = "application/json", MessageId = ... });
+```
+Also does batching (`SendMessagesAsync` / `CreateMessageBatchAsync`) and scheduled
+messages (`ScheduleMessageAsync`) when you need them.
+
+### `ServiceBusReceiver` — manual (pull) receive
+You control the loop: ask for messages, process, then explicitly settle each one.
+Use it when you want fine-grained control over *when* and *how many* you pull:
+```csharp
+ServiceBusReceiver receiver = client.CreateReceiver("orders");
+ServiceBusReceivedMessage msg = await receiver.ReceiveMessageAsync();
+try {
+    // ... handle msg.Body ...
+    await receiver.CompleteMessageAsync(msg);      // done — remove from queue
+} catch {
+    await receiver.AbandonMessageAsync(msg);        // release lock -> redelivered
+    // or receiver.DeadLetterMessageAsync(msg) to send it straight to dead-letter
+}
+```
+
+### `ServiceBusProcessor` — event-driven receive (the usual choice for a long-running consumer)
+You don't write the loop — you subscribe handlers and start it. It manages
+concurrency (`MaxConcurrentCalls`), auto-renews message locks for long work, and
+can auto-complete. Best for a hosted service that continuously drains a queue:
+```csharp
+ServiceBusProcessor processor = client.CreateProcessor("orders", new ServiceBusProcessorOptions { MaxConcurrentCalls = 5 });
+processor.ProcessMessageAsync += async args => {
+    // ... handle args.Message.Body ...
+    await args.CompleteMessageAsync(args.Message);
+};
+processor.ProcessErrorAsync += args => { /* log args.Exception */ return Task.CompletedTask; };
+await processor.StartProcessingAsync();
+```
+
+**Receiver vs. Processor — which to pick:** `ServiceBusReceiver` when you want
+manual, on-demand control (pull a batch, process, stop). `ServiceBusProcessor` for
+a continuously-running consumer — it's higher-level and handles the loop,
+concurrency, and lock renewal for you. **In this repo neither is used directly on
+the receive side** — the Functions **`[ServiceBusTrigger]`** wraps this machinery
+entirely: the Functions host runs the processor for you and just calls your method
+per message (auto-complete on success, retry on throw). The Receiver/Processor
+snippets above are the equivalent you'd write in a non-Functions consumer (a
+console app or a `BackgroundService` in the WebApp).
+
 ## Completing vs. abandoning vs. dead-lettering — the part everyone forgets
 
 - The trigger method **returns normally** → the message is marked complete and removed from the queue. Done, forever.
@@ -198,6 +268,12 @@ The publisher and receiver code are both correct and match the real Azure Servic
 
 **Q: Why put a queue between the controller and the actual order processing instead of just calling it directly?**
 Decoupling and resilience. The HTTP caller gets a fast response regardless of how slow downstream processing is; if the receiver is temporarily down, messages just wait in the queue instead of the request failing; and the two sides can be scaled, deployed, and fail independently.
+
+**Q: Walk through the main Service Bus SDK types and their lifetimes.**
+`ServiceBusClient` owns the connection to the namespace — expensive, so it's a singleton created once. From it you create: `ServiceBusSender` (sends to a queue/topic; cheap, cache one per destination), `ServiceBusReceiver` (manual pull-based receive — you call `ReceiveMessagesAsync` and settle messages yourself), and `ServiceBusProcessor` (event-driven receive — you register message/error handlers and it runs the loop, manages concurrency, and renews locks). Client = singleton; sender/receiver/processor = created from it and comparatively cheap.
+
+**Q: ServiceBusReceiver vs. ServiceBusProcessor — when would you use each?**
+`ServiceBusReceiver` is manual and pull-based: you decide when to receive, how many, and explicitly complete/abandon/dead-letter each — good when you want tight control or batch-at-a-time processing. `ServiceBusProcessor` is the higher-level, event-driven option for a long-running consumer: you give it handlers and call `StartProcessingAsync`, and it owns the receive loop, concurrency (`MaxConcurrentCalls`), and automatic lock renewal. For a continuously-draining background consumer you'd normally reach for the Processor; for on-demand or controlled pulls, the Receiver. (In this repo the Functions `[ServiceBusTrigger]` wraps all of this, so you write neither directly.)
 
 **Q: Why is ServiceBusClient a singleton but senders are created per queue?**
 The client owns the actual connection/authentication and is expensive to set up — you want one for the app's whole lifetime, not one per request. Senders are lightweight wrappers around a specific queue/topic and are safe and cheap to keep cached per destination; creating a brand new sender (or client) on every publish would be wasteful and, at scale, could exhaust connections.
