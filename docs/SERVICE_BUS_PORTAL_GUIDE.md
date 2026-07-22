@@ -136,6 +136,58 @@ also drain (Listen) or reconfigure (Manage) your queues. The presence of
   string is used with APIs that target a single entity. This repo uses the
   namespace form (see `ServiceBusPublisher.cs`).
 
+## Shared Access Policies (SAS) explained
+
+**Navigation:** Home → your **Service Bus namespace** → **Settings** → **Shared
+access policies** → **RootManageSharedAccessKey**.
+
+A **Shared Access Policy** is a named set of permissions with a pair of keys; a
+connection string is really just "an endpoint + one policy's key." This is
+Service Bus's **SAS (Shared Access Signature)** auth model — auth by key, as
+opposed to auth by identity (RBAC/Managed Identity).
+
+### The three rights a policy can grant
+Every policy is some combination of these:
+- **Manage** — full control: send, receive, *and* create/delete/configure
+  queues, topics, and policies. Most powerful; hand out sparingly.
+- **Send** — can publish messages only. What a *publisher* (this repo's WebApp)
+  should get — nothing more.
+- **Listen** — can receive/consume messages only. What a *receiver* (the Function
+  App) should get.
+
+`Manage` implies `Send` + `Listen`. A least-privilege setup gives a publisher a
+**Send-only** policy and a receiver a **Listen-only** policy, so one leaked key
+can't do the other's job (or reconfigure your namespace).
+
+### RootManageSharedAccessKey (the default policy)
+Every namespace is created with one built-in policy, **RootManageSharedAccessKey**,
+which has **Manage** (so Send + Listen too). It's the convenient "everything" key —
+fine for learning/demos, but in production you generally **leave it alone** and
+create narrower policies (Send-only, Listen-only) instead of handing this all-powerful
+key to apps.
+
+### Primary vs. secondary key (why there are two)
+Each policy has a **Primary** and a **Secondary** key, and either works. Two exist
+to enable **zero-downtime key rotation**: switch your apps to the secondary key,
+regenerate the primary, switch back — so you can rotate a compromised/expiring key
+without a window where *no* valid key exists. (Same idea as secret rotation in
+`docs/KEYVAULT.md`.)
+
+### Namespace-level vs. entity-level policies
+- **Namespace-level** (Settings → Shared access policies, where
+  `RootManageSharedAccessKey` lives) — applies to *all* queues/topics in the namespace.
+- **Entity-level** (a specific queue/topic → its own Shared access policies) —
+  scoped to that one entity; its connection string carries `EntityPath=<name>`
+  (see Step 6). Prefer entity-level + a single right for real workloads.
+
+### SAS vs. RBAC (the modern alternative)
+SAS policies authenticate by **key** (something you store and must rotate). The
+newer, preferred option in Azure is **RBAC + Managed Identity / `DefaultAzureCredential`**:
+grant an identity the `Azure Service Bus Data Sender` or `Data Receiver` role and
+there's **no key at all** to store or leak (see `docs/MANAGED_IDENTITY_ENTRA_ID.md`).
+Rule of thumb: SAS for quick/local/demo or non-Azure clients; RBAC + Managed
+Identity when the sender/receiver runs in Azure.
+
 ---
 
 ## Quick recap
