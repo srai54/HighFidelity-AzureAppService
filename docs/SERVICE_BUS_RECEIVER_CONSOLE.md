@@ -145,6 +145,62 @@ Not settling at all → the lock eventually expires and the message reappears
 4. Confirm the queue drained: in the portal, the queue's **Active message count**
    drops to 0 as messages are completed.
 
+## Receive modes — PeekLock vs. ReceiveAndDelete
+
+When you create a receiver you pick a **receive mode**, and it changes what
+`ReceiveMessageAsync` does to the message:
+
+| | **PeekLock** (default) | **ReceiveAndDelete** |
+|---|---|---|
+| On receive | Message is **locked** (hidden from others), but stays on the queue | Message is **deleted immediately** as it's handed to you |
+| You must settle it? | **Yes** — complete/abandon/defer/dead-letter | **No** — it's already gone |
+| If your app crashes after receiving | Lock expires → message **reappears** and is redelivered (safe) | Message is **lost** — it was already removed |
+| Delivery guarantee | **At-least-once** | **At-most-once** |
+| Use when | You must not lose a message (almost always) | Throughput matters more than the occasional lost message (e.g. high-volume telemetry you can afford to drop) |
+
+**PeekLock** is the default and the safe choice: the lock gives you a window to
+process the message and only then remove it (by completing), so a failure mid-way
+means the message comes back rather than vanishing. That's why every other section
+here talks about "settling" — it only exists in PeekLock mode.
+
+**ReceiveAndDelete** skips locking and settling entirely — faster and simpler, but
+the moment you receive a message it's gone from the queue whether or not you
+actually processed it. Choose it explicitly:
+```csharp
+ServiceBusReceiver receiver = client.CreateReceiver(
+    queueName,
+    new ServiceBusReceiverOptions { ReceiveMode = ServiceBusReceiveMode.ReceiveAndDelete });
+
+ServiceBusReceivedMessage message = await receiver.ReceiveMessageAsync();
+// No CompleteMessageAsync — the message was already removed on receive.
+```
+
+## The Peek() method — look without taking
+
+`PeekMessageAsync` / `PeekMessagesAsync` is different from receiving: it's a
+**non-destructive, read-only** look at what's on the queue. A peeked message is
+**not locked and not removed**, its delivery count isn't touched, and you **cannot
+complete/abandon** it (there's nothing to settle — you only looked).
+
+```csharp
+// Look at the next message without affecting it — it stays on the queue.
+ServiceBusReceivedMessage? peeked = await receiver.PeekMessageAsync();
+Console.WriteLine(peeked?.Body);
+
+// Peek a batch:
+IReadOnlyList<ServiceBusReceivedMessage> batch = await receiver.PeekMessagesAsync(maxMessages: 10);
+```
+
+Use Peek for **monitoring/inspection** — "what's sitting in the queue right now,"
+"what's in the dead-letter queue" — without consuming anything. (This is exactly
+what the portal's Service Bus Explorer "Peek" does — see
+`docs/SERVICE_BUS_PORTAL_GUIDE.md`.) Peek can even see messages that are currently
+locked by another receiver or deferred, because it ignores locks.
+
+**Receive vs. Peek in one line:** *Receive* takes the message (locks it in PeekLock,
+or removes it in ReceiveAndDelete) and is how you *process* work; *Peek* just looks
+and is how you *inspect* without disturbing anything.
+
 ## ServiceBusReceiver vs. ServiceBusProcessor
 
 This sample uses **`ServiceBusReceiver`** — *manual pull*: you control when and
@@ -192,3 +248,19 @@ Receiver for manual, on-demand pulling (a tool, batch job, or when you want tigh
 control). Processor for a continuously-running consumer — it owns the loop,
 concurrency, and lock renewal, so you just supply handlers. The Functions
 ServiceBusTrigger is a managed processor under the hood.
+
+**Q: What's the difference between PeekLock and ReceiveAndDelete mode?**
+PeekLock (default) locks a received message but leaves it on the queue until you
+settle it (complete/abandon/etc.) — so a crash mid-processing means it reappears
+and is redelivered: at-least-once, safe. ReceiveAndDelete removes the message the
+instant it's received, no settling — faster and simpler, but if you fail after
+receiving, the message is lost: at-most-once. Use PeekLock unless you can genuinely
+tolerate dropped messages (e.g. high-volume, low-value telemetry).
+
+**Q: What does Peek do, and how is it different from Receive?**
+Peek (`PeekMessageAsync`) is a non-destructive read — it returns a copy of a
+message without locking or removing it, doesn't change the delivery count, and
+can't be settled. Receive actually takes the message (locks it in PeekLock, or
+deletes it in ReceiveAndDelete). Peek is for inspecting/monitoring the queue (and
+the dead-letter queue) without consuming anything; Receive is for processing work.
+Peek can also see locked or deferred messages, since it ignores locks.

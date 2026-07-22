@@ -154,6 +154,10 @@ messages (`ScheduleMessageAsync`) when you need them.
 
 ### `ServiceBusReceiver` — manual (pull) receive
 You control the loop: ask for messages, process, then explicitly settle each one.
+It has two **receive modes** — **PeekLock** (default: lock the message, settle it
+yourself, at-least-once) and **ReceiveAndDelete** (removed on receive, no settling,
+at-most-once) — plus a non-destructive **`PeekMessageAsync`** to inspect without
+consuming. Full comparison + code in `docs/SERVICE_BUS_RECEIVER_CONSOLE.md`.
 Use it when you want fine-grained control over *when* and *how many* you pull:
 ```csharp
 ServiceBusReceiver receiver = client.CreateReceiver("orders");
