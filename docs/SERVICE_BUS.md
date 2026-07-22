@@ -1,5 +1,9 @@
 # Azure Service Bus — Queue (Publisher + Receiver)
 
+## What is it, in one paragraph
+
+**Azure Service Bus is a fully-managed message broker** — a middleman that reliably holds messages between the code that *produces* work and the code that *consumes* it. A producer drops a message onto a **queue** (or a **topic**); Service Bus stores it durably until a consumer picks it up and confirms it's done. Because the broker sits in the middle, the producer and consumer never call each other directly — and that one fact is what buys you the two properties this doc is really about: **decoupling** (the two sides don't depend on each other being up, fast, or even deployed together) and **load balancing** (many consumers can share the work of draining one queue). It's Azure's "enterprise" messaging option, richer than the simpler Storage Queues (ordering via sessions, transactions, dead-lettering, topics/subscriptions).
+
 ## The plain-English version
 
 A queue solves one problem: **the thing that creates work and the thing that does the work don't need to run at the same time, or even both be up at the same moment.** Without a queue, `OrdersController` would have to call the order-processing logic directly, in-process, and if that processing is slow (charge a card, call a shipping API, write to three tables) the customer's HTTP request sits there waiting for all of it. With a queue, the controller does one fast thing — "drop a message describing what happened" — and returns immediately. Something else, whenever it's ready, picks that message up and does the slow work.
@@ -9,6 +13,70 @@ Service Bus specifically (as opposed to Storage Queues, the cheaper/simpler alte
 ## The analogy that makes it click
 
 Think of a restaurant kitchen ticket rail. The waiter (the **publisher** — `OrdersController` in this repo) writes an order on a ticket and clips it to the rail, then immediately goes back to serving other tables — they don't stand at the pass watching it cook. The chef (the **receiver** — `OrderCreatedFunction` in this repo) works through tickets on the rail whenever they're free, in whatever order they come. Crucially: **the waiter never talks to the chef directly.** If the chef is on a break, tickets just wait on the rail — nothing is lost, and the waiter's job (taking orders) is completely unaffected by whether the kitchen is fast or slow right now. That decoupling is the entire value of a queue.
+
+## The building blocks — Namespace, Queue, Topic, Subscription
+
+Four entities, in a hierarchy. Getting these straight is foundational (and a
+very common interview opener):
+
+- **Namespace** — the top-level container and the network endpoint (e.g.
+  `sb-highfid-1234.servicebus.windows.net`). It's like a "server" for messaging:
+  the connection string points at a namespace, and queues/topics live *inside*
+  it. You pick a pricing tier at the namespace level (Basic / Standard / Premium),
+  and that tier decides what's available inside — notably, **topics need Standard
+  or Premium; Basic only allows plain queues.**
+- **Queue** — a single line of messages with **one logical consumer side**:
+  one message goes to one consumer (spread across competing-consumer instances,
+  as above). This is **point-to-point**: producer → queue → (a) consumer. This
+  repo uses a queue (`orders`).
+- **Topic** — looks like a queue to the *sender* (you publish a message to it the
+  same way), but it's built for **one-to-many** fan-out. A topic on its own
+  doesn't hold consumers; it forwards each message to all of its subscriptions.
+- **Subscription** — a named "virtual queue" attached to a topic. Each
+  subscription gets **its own independent copy** of every message published to the
+  topic (subject to its filter, if any), and each is consumed independently — with
+  its own competing consumers, its own dead-letter queue, etc.
+
+**Queue vs. Topic+Subscription — the one-line distinction:** a *queue* delivers
+each message to exactly one consumer (point-to-point, work distribution); a
+*topic* delivers each message to every subscription (publish/subscribe, fan-out).
+Use a queue when one logical worker should handle each message; use a topic when
+several *different* services each independently need to react to the same event.
+
+Concrete example: if "order placed" should be handled once (process the order),
+that's a **queue**. If "order placed" should simultaneously (a) trigger
+fulfillment, (b) update the analytics warehouse, and (c) send a confirmation
+email — three different services each needing their own copy — that's a **topic**
+with three **subscriptions**, one per service. Subscriptions can also carry
+**filters** (SQL-like rules) so a subscription only receives the subset of
+messages it cares about (e.g. `amount > 1000` → a "large orders" subscription).
+
+This maps onto the messaging-comparison doc too: a topic's fan-out overlaps
+conceptually with Event Grid, but Service Bus topics are pull-based, ordered, and
+durable per-subscription — see `docs/MESSAGING_COMPARISON.md`.
+
+## Decoupling services — the first big reason
+
+"Decoupling" means the producer and consumer depend on **the queue**, not on **each other**. Concretely, that removes four kinds of dependency that a direct in-process (or direct HTTP) call forces on you:
+
+- **Temporal decoupling (time):** they don't have to be up at the same instant. If `OrderCreatedFunction` is redeploying or crashed, `OrdersController` keeps accepting orders — messages queue up and get processed when the consumer returns. A direct call would fail the moment the downstream is down.
+- **Performance decoupling (speed):** the producer returns as soon as the message is enqueued (fast), regardless of how slow the actual processing is. The customer's HTTP request isn't held hostage to a card charge + shipping API + three DB writes.
+- **Deployment decoupling (lifecycle):** WebApp and Functions are separate Azure resources, released on their own schedules. Neither redeploy forces the other. This is exactly why `OrderCreatedMessage` is *redefined* on each side rather than shared via a project reference — sharing the type would recouple their build/deploy lifecycles; the JSON on the wire is the real contract.
+- **Failure decoupling (blast radius):** a bug or overload in the consumer can't take down the producer. The worst case is a backlog in the queue, not a cascading failure up into the request path.
+
+The mental test for "should this be decoupled with a queue": *if the downstream disappeared for 30 seconds, should the user-facing request fail, or should the work just wait?* If "wait," you want a queue.
+
+## Load balancing across services — the competing consumers pattern
+
+The second big reason, and the one direct calls can't give you cheaply. A single queue can be drained by **many consumer instances at once**, and Service Bus hands each message to **exactly one** of them. This is the **competing consumers pattern**: N workers all listening to the same `orders` queue, each grabbing the next available message, so the total throughput scales with the number of workers — automatic load balancing, with zero load-balancer configuration.
+
+How it works, and why it's safe:
+
+- When a consumer picks up a message, Service Bus puts a **lock** on it (PeekLock mode) for a lock duration. While locked, **no other consumer can see or take that message** — so two workers never process the same order. The consumer completes the message (lock released, message gone) or it throws/times out (lock expires, message reappears for someone else).
+- Scaling is just "add more consumers." In this repo the consumer is a **Function App on a Consumption plan**, which does this for you: the Functions runtime watches the queue depth and **automatically spins up more instances when the backlog grows**, each an independent competing consumer, then scales back down (to zero) when the queue drains. You don't write or configure the load balancing — the queue + the platform's auto-scale *is* the load balancer.
+- Contrast with a plain HTTP load balancer: an HTTP LB spreads *inbound requests* across instances and needs all instances healthy and reachable *now*. Queue-based load balancing spreads *stored work* across whatever consumers happen to be running, pulling at their own pace — a slow or briefly-dead worker simply pulls fewer messages; it doesn't drop any.
+
+One caveat worth naming: plain competing consumers gives you **throughput scaling but not ordering** — if order matters, you use **sessions** (a session id pins all of one group's messages to one consumer, preserving order within that group while still load-balancing across groups). That's the trade-off between "drain as fast as possible" and "process this customer's events strictly in order."
 
 ## How this repo implements it — the publisher
 
@@ -66,6 +134,21 @@ It's where messages land after exceeding the max delivery count — a holding ar
 
 **Q: Why is OrderCreatedMessage defined twice — once in WebApp, once in Functions — instead of shared in a common project?**
 Because WebApp and Functions are two independently deployable Azure resources connected only by the queue, the same way two microservices are. Sharing the actual C# type via a project/package reference would recouple their deployment lifecycles — you couldn't change one without potentially needing to redeploy the other. The JSON shape is the real contract between them; each side owning its own type that happens to match that shape keeps them genuinely independent.
+
+**Q: What's the difference between a namespace, a queue, a topic, and a subscription?**
+A namespace is the top-level container and endpoint (the "server"), holding queues and topics and setting the pricing tier. A queue is point-to-point: each message goes to exactly one consumer. A topic is publish/subscribe: it fans each message out to all of its subscriptions. A subscription is a named virtual queue on a topic that receives its own independent copy of each message (optionally filtered) and is consumed independently. Short version: queue = one message → one consumer; topic+subscriptions = one message → every subscription.
+
+**Q: When would you use a topic instead of a queue?**
+When several *different* services each independently need to react to the same event. "Order placed" that should be handled once → queue. "Order placed" that should trigger fulfillment AND analytics AND an email, each a separate service with its own copy → topic with one subscription per service. Subscription filters let each subscription receive only the messages it cares about.
+
+**Q: How does Service Bus load-balance work across multiple consumers?**
+The competing consumers pattern: multiple consumer instances all listen to the same queue, and Service Bus locks each message to exactly one of them (PeekLock) while it's being processed, so no two consumers handle the same message. Throughput scales with the number of consumers, and with a Consumption-plan Function App the platform auto-scales instances up as the queue backlog grows and back down as it drains — the queue plus platform auto-scale is the load balancer, with nothing to configure.
+
+**Q: What's the difference between queue-based load balancing and an HTTP load balancer?**
+An HTTP load balancer distributes *inbound requests* across instances that must all be healthy and reachable at that moment. Queue-based load balancing distributes *stored work*: consumers pull messages at their own pace, so a slow or briefly-down worker just pulls fewer messages rather than dropping any, and work survives in the queue until someone processes it. One balances live traffic; the other balances durable work.
+
+**Q: Does competing consumers preserve message order?**
+No — with plain competing consumers, multiple workers pull in parallel, so ordering isn't guaranteed. If you need ordering, use sessions: a session id pins all of one group's messages to a single consumer so they're processed in order, while different sessions still load-balance across consumers. It's a deliberate trade-off between maximum throughput and per-group ordering.
 
 **Q: Service Bus vs. Storage Queues — when would you pick one over the other?**
 Storage Queues are cheaper and simpler — fine for basic "fire and forget" background work. Service Bus costs more but adds things Storage Queues don't have: guaranteed ordering via sessions, transactions, a proper dead-letter subqueue, and topics/subscriptions (one message delivered to multiple independent subscribers, not just one consumer). Pick Service Bus when you need any of those; Storage Queues if you genuinely just need "a queue" and nothing more.
