@@ -44,6 +44,7 @@ docs/
   MESSAGING_COMPARISON.md      → theory + interview Q&A (conceptual — no dedicated code)
   DEPLOYMENT_SLOTS_SCALING.md  → theory + interview Q&A (conceptual — no dedicated code)
   PROVISIONING.md              → how to CREATE the Azure resources (indexes the scripts/ folder)
+  STUDY_RESOURCES.md           → external study links (videos/articles) collected per topic
 scripts/
   00..09 + 99 .azcli           → commented az CLI provisioning scripts, one per feature (learning
                                  reference — NOT auto-run; you run them yourself after `az login`)
