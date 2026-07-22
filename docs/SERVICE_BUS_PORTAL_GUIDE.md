@@ -151,6 +151,11 @@ queue-vs-topic theory). Steps in the portal:
 1. Open the **namespace** → **Overview** → **+ Topic** (top toolbar).
 2. **Name** it, e.g. `orders-topic`. Leave size/TTL defaults.
 3. **Create**. It appears under the namespace's **Topics** list.
+4. **Go to the resource** (click the topic). Check the **Subscriptions** count —
+   it shows **0 subscriptions**. That's expected: a topic on its own holds nothing;
+   a message published to a topic with **zero subscriptions is simply dropped**
+   (there's no one to deliver a copy to). This is exactly why the next step —
+   creating at least one subscription — matters before you publish.
 
 ### Create one or more subscriptions
 1. Click the **`orders-topic`** topic → **+ Subscription** (top toolbar).

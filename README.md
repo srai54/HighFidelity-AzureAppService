@@ -41,6 +41,7 @@ docs/
   SERVICE_BUS_SENDER_CONSOLE.md → minimal console sender from scratch (NuGet → client → sender → send)
   SERVICE_BUS_RECEIVER_CONSOLE.md → minimal console receiver (client → receiver → receive/complete)
   SERVICE_BUS_DEAD_LETTER_QUEUE.md → what a DLQ is, sending to it (dead-lettering), reading from it
+  SAGA_PATTERN.md              → distributed transactions across services (choreography vs orchestration)
   BLOB_STORAGE.md              → theory + interview Q&A
   RESILIENCE_POLLY.md          → theory + interview Q&A
   DURABLE_FUNCTIONS.md         → theory + interview Q&A

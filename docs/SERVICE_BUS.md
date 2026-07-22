@@ -334,6 +334,10 @@ the "send-via" entity** that the others are routed through (an implementation de
 of how Service Bus coordinates the atomic operation across entities). Transactions
 are a Standard/Premium feature (not Basic).
 
+> Cross-entity transactions give atomicity *within* Service Bus. For consistency
+> across **separate services/databases** — where no shared transaction exists —
+> you need the **Saga pattern** instead: see `docs/SAGA_PATTERN.md`.
+
 ## What's real vs. reference-only in this repo
 
 The publisher and receiver code are both correct and match the real Azure Service Bus SDK surface exactly as they'd be used against a real namespace. Neither has been run end-to-end here — Azurite (used for Blob Storage) does **not** emulate Service Bus, and Microsoft's Service Bus emulator requires Docker, which wasn't available in this environment. The receiver's registration with the Functions host *was* confirmed (it correctly reported "connection string not configured" rather than crashing the whole host — see `docs/FUNCTION_APPS.md`), which at least proves the trigger attribute and method signature are valid.

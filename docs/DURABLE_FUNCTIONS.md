@@ -1,5 +1,9 @@
 # Durable Functions — Stateful Orchestration on Top of Functions
 
+> A Durable Functions orchestrator is also the natural way to implement an
+> **orchestration-style Saga** (distributed transaction across services with
+> compensations) — see `docs/SAGA_PATTERN.md`.
+
 ## The plain-English version
 
 A plain Azure Function is stateless and short-lived: it wakes up, does one thing, and dies. That's fine until you need a *workflow* — several steps that have to happen in order, or in parallel-then-rejoin, possibly spanning minutes, hours, or days, where you need to remember exactly where you were if the process restarts halfway through.
