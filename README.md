@@ -40,6 +40,7 @@ docs/
   SEND_TO_SERVICE_BUS_FROM_VISUAL_STUDIO.md → run the WebApp in VS and publish a message via Swagger
   SERVICE_BUS_SENDER_CONSOLE.md → minimal console sender from scratch (NuGet → client → sender → send)
   SERVICE_BUS_RECEIVER_CONSOLE.md → minimal console receiver (client → receiver → receive/complete)
+  SERVICE_BUS_DEAD_LETTER_QUEUE.md → what a DLQ is, sending to it (dead-lettering), reading from it
   BLOB_STORAGE.md              → theory + interview Q&A
   RESILIENCE_POLLY.md          → theory + interview Q&A
   DURABLE_FUNCTIONS.md         → theory + interview Q&A
@@ -56,6 +57,8 @@ scripts/
 samples/
   ServiceBusSenderConsole/     → minimal standalone console app that sends one message to a queue
                                  (paired with docs/SERVICE_BUS_SENDER_CONSOLE.md)
+  ServiceBusReceiverConsole/   → minimal console receiver (docs/SERVICE_BUS_RECEIVER_CONSOLE.md)
+  ServiceBusDeadLetterConsole/ → dead-letter a message + read the DLQ (docs/SERVICE_BUS_DEAD_LETTER_QUEUE.md)
 ```
 
 Each `docs/*.md` file follows the same shape: a plain-English explanation (with an analogy, aimed at actually sticking in memory rather than reading like a spec), how this repo implements it with real file references, and a set of interview questions with real answers at the end.
