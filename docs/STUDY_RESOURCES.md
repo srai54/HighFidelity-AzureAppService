@@ -33,7 +33,9 @@ matching topic heading as you find them.
 ## Azure Storage (Blob, Queue, File)
 
 - 📺 **YouTube playlist:** https://www.youtube.com/playlist?list=PLU1w_BFZFd2oCFnnuCv9AeD2ccsWM59My
+- 📰 **Article (read-ready):** Understanding Azure Blob Storage basics — https://sedai.io/blog/understanding-azure-blob-storage-basics
 - 📄 In-repo notes: [`docs/BLOB_STORAGE.md`](BLOB_STORAGE.md) (blob types), [`docs/AZURE_STORAGE.md`](AZURE_STORAGE.md) (account, access levels, SAS, connecting, listing, Postman), [`docs/AZURE_STORAGE_QUEUE.md`](AZURE_STORAGE_QUEUE.md), [`docs/AZURE_FILE_SHARE.md`](AZURE_FILE_SHARE.md)
+- 📑 Master index + interview question bank: [`docs/BLOB_STORAGE_STUDY_INDEX.md`](BLOB_STORAGE_STUDY_INDEX.md)
 - 🔧 Code: `src/WebApp/Services/BlobStorageService.cs`, `Controllers/BlobStorageController.cs`
 - 🛠️ Provisioning: [`scripts/06-blob-storage.azcli`](../scripts/06-blob-storage.azcli)
 
