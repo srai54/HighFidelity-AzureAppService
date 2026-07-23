@@ -81,6 +81,29 @@ public class BlobStorageService : IBlobStorageService
         return response.Value.Content;
     }
 
+    public async Task<(Stream Content, string ContentType)?> ReadImageAsync(string containerName, string blobName)
+    {
+        var container = _blobServiceClient.GetBlobContainerClient(containerName);
+        var blob = container.GetBlobClient(blobName);
+
+        if (!await blob.ExistsAsync())
+            return null;
+
+        // DownloadStreamingAsync carries the stored HTTP headers, so we hand
+        // back the ContentType the blob was uploaded with (e.g. image/png)
+        // rather than the generic octet-stream Download uses.
+        var response = await blob.DownloadStreamingAsync();
+        var contentType = response.Value.Details.ContentType;
+        return (response.Value.Content, string.IsNullOrEmpty(contentType) ? "application/octet-stream" : contentType);
+    }
+
+    public async Task<bool> DeleteAsync(string containerName, string blobName)
+    {
+        var container = _blobServiceClient.GetBlobContainerClient(containerName);
+        var blob = container.GetBlobClient(blobName);
+        return await blob.DeleteIfExistsAsync();
+    }
+
     public async Task<IReadOnlyList<string>> ListBlobsAsync(string containerName)
     {
         var container = _blobServiceClient.GetBlobContainerClient(containerName);

@@ -24,14 +24,25 @@ where; use the questions to drill. Playlist: `docs/STUDY_RESOURCES.md`.
 - [x] **SAS** (service / account / user-delegation)
 - [x] **Accessing a blob from Postman** (SAS URL, or Entra ID bearer/JWT)
 
+### The five storage data services, side by side (`docs/AZURE_STORAGE_SERVICES.md`)
+- [x] **Blob / File / Queue / Table / Disk** — one consolidated doc: what each is, when to
+      use it, a comparison table, and per-service interview questions (also the BLOB =
+      Binary Large Object + block/append/page primer)
+
 ### Sibling storage services
 - [x] **Storage Queues** — `docs/AZURE_STORAGE_QUEUE.md` (intro, advantages, fan-out,
       delete via PopReceipt, vs Service Bus)
 - [x] **Azure Files** — `docs/AZURE_FILE_SHARE.md` (SMB share, mount, use cases)
-- [ ] **Table Storage** — NoSQL key-value (mentioned; see also Cosmos in `docs/SQL_VS_COSMOS.md`)
+- [x] **Table Storage** — NoSQL key-value; PartitionKey/RowKey (`docs/AZURE_STORAGE_SERVICES.md`;
+      see also Cosmos in `docs/SQL_VS_COSMOS.md`)
+- [x] **Azure Disk (Managed Disks)** — block storage for VMs, page-blob-shaped
+      (`docs/AZURE_STORAGE_SERVICES.md`)
 
 ### Blob-driven compute
 - [x] **Blob trigger** & Event-Grid-based blob events — `docs/FUNCTION_APPS.md`
+- [x] **Azure Functions — concepts** (triggers/bindings, plans) — `docs/FUNCTION_APPS.md`
+- [x] **Azure Functions — create/publish, portal test, URLs & keys, logs, `local.settings.json`**
+      — `docs/FUNCTION_APPS_PORTAL_AND_DEPLOY.md`
 
 ### Operational features (covered in the question bank below)
 - [ ] Access **tiers** (Hot / Cool / Cold / Archive) & rehydration
@@ -47,6 +58,9 @@ doc — they're covered here so this index is complete for interview prep.)*
 ---
 
 ## Interview question bank
+
+> **Five-services Q&A** (Blob / File / Queue / Table / Disk, with the Binary-Large-Object
+> primer) lives in `docs/AZURE_STORAGE_SERVICES.md`. The banks below drill deeper per area.
 
 ### A. Blob types (answers in `docs/BLOB_STORAGE.md`)
 1. What are the three Azure blob types and what's each one for?

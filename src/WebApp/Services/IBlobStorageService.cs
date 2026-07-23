@@ -20,5 +20,11 @@ public interface IBlobStorageService
 
     Task<Stream?> DownloadAsync(string containerName, string blobName);
 
+    /// <summary>Reads a blob back together with the content type it was stored with — lets a browser render images inline.</summary>
+    Task<(Stream Content, string ContentType)?> ReadImageAsync(string containerName, string blobName);
+
+    /// <summary>Removes a blob. Returns false when the blob did not exist.</summary>
+    Task<bool> DeleteAsync(string containerName, string blobName);
+
     Task<IReadOnlyList<string>> ListBlobsAsync(string containerName);
 }

@@ -1,5 +1,10 @@
 # Azure Function Apps (HTTP, Timer, Event triggers)
 
+> **Concepts here; operations next door.** This doc covers the *programming model* —
+> triggers vs. bindings, plans, return-value semantics. For the *practical lifecycle* —
+> create & publish a Function App, test in the portal, function URLs & keys, reading logs,
+> and `local.settings.json` — see `docs/FUNCTION_APPS_PORTAL_AND_DEPLOY.md`.
+
 ## The plain-English version
 
 A Function App is **code that runs only when something specific happens, and doesn't exist as a running process the rest of the time.** Contrast with `WebApp` in this repo: that's a Kestrel process listening on a port 24/7, whether or not anyone's calling it. A Function has no process sitting idle — the Azure Functions *host* is what's always running, and it invokes your method when its trigger condition fires, then your method returns and goes back to not running.

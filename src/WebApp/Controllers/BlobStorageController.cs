@@ -49,6 +49,22 @@ public class BlobStorageController : ControllerBase
         return stream is null ? NotFound() : File(stream, "application/octet-stream", blobName);
     }
 
+    [HttpGet("image/{blobName}")]
+    public async Task<ActionResult> ReadImage(string blobName)
+    {
+        var result = await _blobStorage.ReadImageAsync(ContainerName, blobName);
+        // No octet-stream download name here — return with the stored content
+        // type so the browser renders the image inline instead of saving it.
+        return result is null ? NotFound() : File(result.Value.Content, result.Value.ContentType);
+    }
+
+    [HttpDelete("{blobName}")]
+    public async Task<ActionResult> Remove(string blobName)
+    {
+        var deleted = await _blobStorage.DeleteAsync(ContainerName, blobName);
+        return deleted ? Ok(new { blobName, deleted = true }) : NotFound();
+    }
+
     [HttpGet]
     public async Task<ActionResult<IReadOnlyList<string>>> List() =>
         Ok(await _blobStorage.ListBlobsAsync(ContainerName));
