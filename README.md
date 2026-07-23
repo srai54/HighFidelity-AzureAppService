@@ -47,6 +47,7 @@ docs/
   AZURE_STORAGE.md             → account, private/anonymous access, virtual dirs, connecting, listing, SAS, Postman
   AZURE_STORAGE_QUEUE.md       → Storage Queues: intro, advantages, fan-out, delete message, vs Service Bus
   AZURE_FILE_SHARE.md          → Azure Files (SMB share): concept, use cases, mount demo
+  BLOB_STORAGE_STUDY_INDEX.md  → master index: full topic checklist + all storage interview questions
   RESILIENCE_POLLY.md          → theory + interview Q&A
   DURABLE_FUNCTIONS.md         → theory + interview Q&A
   MANAGED_IDENTITY_ENTRA_ID.md → theory + interview Q&A
