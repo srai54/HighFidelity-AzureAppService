@@ -39,6 +39,13 @@ matching topic heading as you find them.
 - 🔧 Code: `src/WebApp/Services/BlobStorageService.cs`, `Controllers/BlobStorageController.cs`
 - 🛠️ Provisioning: [`scripts/06-blob-storage.azcli`](../scripts/06-blob-storage.azcli)
 
+## Azure App Service — Deployment & CI/CD
+
+- 📺 **YouTube video:** https://www.youtube.com/watch?v=v4QHcxLjZZM
+- 📺 **YouTube video:** https://www.youtube.com/watch?v=e732g6Hqulc
+- 📄 In-repo notes: [`docs/DEPLOYMENT_SLOTS_SCALING.md`](DEPLOYMENT_SLOTS_SCALING.md) (slots & scaling), [`docs/PROVISIONING.md`](PROVISIONING.md)
+- 🔧 Deploy target: `src/WebApp` (App Service) — Publish from VS/VS Code, `az webapp deploy`, or a GitHub Actions / Azure DevOps pipeline
+
 ---
 
 ## Other topics (add references here as you find them)
@@ -49,5 +56,7 @@ matching topic heading as you find them.
 - **Managed Identity + Entra ID** — [`docs/MANAGED_IDENTITY_ENTRA_ID.md`](MANAGED_IDENTITY_ENTRA_ID.md)
 - **Redis Cache** — [`docs/REDIS_CACHE.md`](REDIS_CACHE.md)
 - **Azure SQL vs. Cosmos DB** — [`docs/SQL_VS_COSMOS.md`](SQL_VS_COSMOS.md)
+- **MongoDB fundamentals** — [`docs/MONGODB.md`](MONGODB.md)
+- **Cosmos DB for MongoDB (RU vs. vCore)** — [`docs/COSMOS_DB_FOR_MONGODB.md`](COSMOS_DB_FOR_MONGODB.md)
 - **App Service slots & scaling** — [`docs/DEPLOYMENT_SLOTS_SCALING.md`](DEPLOYMENT_SLOTS_SCALING.md)
 - **IConfiguration & middleware** — [`docs/ICONFIGURATION.md`](ICONFIGURATION.md)

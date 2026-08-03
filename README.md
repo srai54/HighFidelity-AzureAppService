@@ -53,6 +53,8 @@ docs/
   MANAGED_IDENTITY_ENTRA_ID.md → theory + interview Q&A
   REDIS_CACHE.md               → theory + interview Q&A
   SQL_VS_COSMOS.md             → theory + interview Q&A
+  MONGODB.md                   → MongoDB fundamentals (docs, indexes, replica sets, sharding) — no dedicated code
+  COSMOS_DB_FOR_MONGODB.md     → Azure's Mongo-compatible API: RU-based vs. vCore-based — no dedicated code
   MESSAGING_COMPARISON.md      → theory + interview Q&A (conceptual — no dedicated code)
   DEPLOYMENT_SLOTS_SCALING.md  → theory + interview Q&A (conceptual — no dedicated code)
   PROVISIONING.md              → how to CREATE the Azure resources (indexes the scripts/ folder)
